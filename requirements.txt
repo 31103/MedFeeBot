@@ -1,0 +1,5 @@
+requests
+beautifulsoup4
+slack_sdk
+google-cloud-storage
+python-dotenv

@@ -1,0 +1,12 @@
+-r requirements.txt
+
+# Testing
+pytest
+pytest-cov
+
+# Type Checking
+mypy
+
+# Linting (Optional, but recommended)
+# flake8
+# black
