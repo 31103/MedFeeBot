@@ -3,9 +3,11 @@
 # Testing
 pytest
 pytest-cov
+pytest-mock
 
 # Type Checking
 mypy
+types-requests # For requests library stubs
 
 # Linting (Optional, but recommended)
 # flake8

@@ -1,4 +1,4 @@
-from . import config
+from .config import load_config # Import load_config
 from .logger import logger
 from . import fetcher
 from . import parser
@@ -13,17 +13,20 @@ def run_check():
     logger.info("処理開始: 診療報酬改定通知の確認を開始します。")
 
     try:
+        # Load configuration at the start of the run
+        cfg = load_config()
+
         # 1. HTMLコンテンツを取得
-        html_content = fetcher.fetch_html(config.TARGET_URL)
+        html_content = fetcher.fetch_html(cfg.target_url) # Use cfg object
         if not html_content:
             # fetch_html内でエラーログは出力済みのはず
             # 必要であれば管理者通知
-            notifier.send_admin_alert(f"HTML取得失敗: {config.TARGET_URL}")
+            notifier.send_admin_alert(f"HTML取得失敗: {cfg.target_url}") # Use cfg object
             logger.error("HTML取得に失敗したため、処理を中断します。")
             return # 処理中断
 
         # 2. HTMLからPDFリンクを抽出
-        current_pdf_links = parser.extract_pdf_links(html_content, config.TARGET_URL)
+        current_pdf_links = parser.extract_pdf_links(html_content, cfg.target_url) # Use cfg object
         # extract_pdf_links内でエラーログは出力されるが、念のためチェック
         # (現実装ではエラー時空セットが返る)
 

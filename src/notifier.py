@@ -1,19 +1,54 @@
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from . import config
+from .config import load_config, Config # Import load_config
 from .logger import logger
 
-# Slackクライアントの初期化
-# トークンが設定されていない場合は初期化しない (エラーを防ぐ)
-slack_client: WebClient | None = None
-if config.SLACK_BOT_TOKEN:
-    slack_client = WebClient(token=config.SLACK_BOT_TOKEN)
-else:
-    logger.warning("SLACK_BOT_TOKENが設定されていないため、Slack通知機能は無効です。")
+# Global variable to hold the client instance (lazy initialized)
+_slack_client: WebClient | None = None
+_slack_config: Config | None = None # To store loaded config
+
+def _get_slack_client() -> WebClient | None:
+    """Initializes and returns the Slack client instance."""
+    global _slack_client, _slack_config
+    if _slack_client is None:
+        try:
+            # Load config if not already loaded by this module
+            if _slack_config is None:
+                 _slack_config = load_config()
+
+            if _slack_config.slack_api_token:
+                _slack_client = WebClient(token=_slack_config.slack_api_token)
+                logger.info("Slack client initialized.")
+            else:
+                logger.warning("SLACK_API_TOKEN is not set. Slack notifications disabled.")
+                # Keep _slack_client as None
+        except ValueError as e:
+            logger.error(f"Failed to load config for Slack client: {e}. Slack notifications disabled.")
+            # Keep _slack_client as None
+        except Exception as e:
+             logger.exception(f"Unexpected error initializing Slack client: {e}. Slack notifications disabled.")
+             # Keep _slack_client as None
+    return _slack_client
+
+def _get_config() -> Config | None:
+    """Loads and returns the config, storing it globally."""
+    global _slack_config
+    if _slack_config is None:
+        try:
+            _slack_config = load_config()
+        except ValueError as e:
+            logger.error(f"Failed to load config: {e}")
+            return None
+        except Exception as e:
+            logger.exception(f"Unexpected error loading config: {e}")
+            return None
+    return _slack_config
+
 
 def _send_message(channel_id: str, text: str, blocks: list | None = None) -> bool:
     """
     指定されたチャンネルにメッセージを送信する内部関数。
+    Slackクライアントを必要に応じて初期化する。
 
     Args:
         channel_id (str): 送信先のチャンネルID。
@@ -23,29 +58,29 @@ def _send_message(channel_id: str, text: str, blocks: list | None = None) -> boo
     Returns:
         bool: 送信に成功した場合はTrue、失敗した場合はFalse。
     """
-    if not slack_client:
-        logger.error("Slackクライアントが初期化されていません。メッセージを送信できません。")
+    client = _get_slack_client()
+    if not client:
+        logger.error("Slack client is not available. Cannot send message.")
         return False
     if not channel_id:
-        logger.error("送信先のチャンネルIDが指定されていません。")
+        logger.error("Destination channel ID is not specified.")
         return False
 
     try:
-        logger.debug(f"Slackへメッセージ送信開始 (チャンネル: {channel_id})")
-        response = slack_client.chat_postMessage(
+        logger.debug(f"Sending Slack message (Channel: {channel_id})")
+        response = client.chat_postMessage(
             channel=channel_id,
-            text=text, # 通知用のフォールバックテキスト
-            blocks=blocks # Block Kitを使う場合
+            text=text, # Fallback text for notifications
+            blocks=blocks # Block Kit payload
         )
-        logger.info(f"Slackメッセージ送信成功 (チャンネル: {channel_id}, ts: {response.get('ts')})")
+        logger.info(f"Slack message sent successfully (Channel: {channel_id}, ts: {response.get('ts')})")
         return True
     except SlackApiError as e:
-        logger.error(f"Slack APIエラーが発生しました (チャンネル: {channel_id}): {e.response['error']}")
-        # エラーの詳細 (例: 'channel_not_found', 'invalid_auth') をログに出力
-        logger.debug(f"Slack APIエラー詳細: {e.response}")
+        logger.error(f"Slack API error occurred (Channel: {channel_id}): {e.response['error']}")
+        logger.debug(f"Slack API error details: {e.response}")
         return False
     except Exception as e:
-        logger.exception(f"Slackメッセージ送信中に予期せぬエラーが発生しました (チャンネル: {channel_id}): {e}")
+        logger.exception(f"Unexpected error sending Slack message (Channel: {channel_id}): {e}")
         return False
 
 def send_slack_notification(new_pdf_links: list[str]):
@@ -55,66 +90,53 @@ def send_slack_notification(new_pdf_links: list[str]):
     Args:
         new_pdf_links (list[str]): 新しく発見されたPDFファイルのURLリスト。
     """
-    if not new_pdf_links:
-        logger.info("新規PDFリンクがないため、Slack通知は送信しません。")
+    cfg = _get_config()
+    if not cfg:
+        logger.error("Configuration not loaded. Cannot send Slack notification.")
+        return
+    if not _get_slack_client(): # Ensure client can be initialized
+        logger.error("Slack client not available. Cannot send notification.")
         return
 
-    if not config.SLACK_CHANNEL_ID:
-        logger.error("通知先のSLACK_CHANNEL_IDが設定されていません。")
+    if not new_pdf_links:
+        logger.info("No new PDF links found, skipping Slack notification.")
+        return
+
+    if not cfg.slack_channel_id:
+        logger.error("SLACK_CHANNEL_ID is not configured. Cannot send notification.")
         return
 
     num_links = len(new_pdf_links)
-    # メッセージのプレーンテキスト版 (通知用)
     text = f"📄 新規PDF通知 ({num_links}件)\n厚生労働省サイトで新しいPDFファイルが検出されました。"
 
-    # Block Kitを使ったメッセージ本体
     blocks = [
         {
             "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"📄 新規PDF通知 ({num_links}件)",
-                "emoji": True
-            }
+            "text": {"type": "plain_text", "text": f"📄 新規PDF通知 ({num_links}件)", "emoji": True}
         },
         {
             "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"厚生労働省サイト (<{config.TARGET_URL}|監視対象ページ>) で新しいPDFファイルが検出されました。"
-            }
+            "text": {"type": "mrkdwn", "text": f"厚生労働省サイト (<{cfg.target_url}|監視対象ページ>) で新しいPDFファイルが検出されました。"}
         },
         {"type": "divider"}
     ]
 
-    # 各PDFリンクをリスト表示 (最大10件程度に制限した方が良い場合も)
-    # Slackのメッセージ長制限にも注意
     link_limit = 10
     for i, link in enumerate(new_pdf_links):
         if i < link_limit:
-            # URLからファイル名を抽出試行 (単純な方法)
-            filename = link.split('/')[-1].split('?')[0] # クエリパラメータ除去
+            filename = link.split('/')[-1].split('?')[0]
             blocks.append({
                 "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"• <{link}|{filename}>"
-                }
+                "text": {"type": "mrkdwn", "text": f"• <{link}|{filename}>"}
             })
         elif i == link_limit:
              blocks.append({
                 "type": "context",
-                "elements": [
-                    {
-                        "type": "plain_text",
-                        "text": f"...他{num_links - link_limit}件のリンクがあります。",
-                        "emoji": True
-                    }
-                ]
+                "elements": [{"type": "plain_text", "text": f"...他{num_links - link_limit}件のリンクがあります。", "emoji": True}]
             })
-             break # 上限に達したらループ終了
+             break
 
-    _send_message(config.SLACK_CHANNEL_ID, text, blocks)
+    _send_message(cfg.slack_channel_id, text, blocks)
 
 def send_admin_alert(message: str, error: Exception | None = None):
     """
@@ -124,67 +146,65 @@ def send_admin_alert(message: str, error: Exception | None = None):
         message (str): 送信するアラートメッセージ。
         error (Exception | None): 関連する例外オブジェクト (オプション)。
     """
-    if not config.SLACK_ADMIN_CHANNEL_ID:
-        logger.debug("管理者通知用チャンネルIDが設定されていないため、管理者アラートは送信しません。")
+    cfg = _get_config()
+    if not cfg:
+        logger.error("Configuration not loaded. Cannot send admin alert.")
+        return
+    if not _get_slack_client(): # Ensure client can be initialized
+        logger.error("Slack client not available. Cannot send admin alert.")
+        return
+
+    if not cfg.admin_slack_channel_id:
+        logger.debug("Admin Slack channel ID not configured. Skipping admin alert.")
         return
 
     text = f"🚨 MedFeeBot 管理者アラート\n{message}"
     blocks = [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "🚨 MedFeeBot 管理者アラート",
-                "emoji": True
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": message
-            }
-        }
+        {"type": "header", "text": {"type": "plain_text", "text": "🚨 MedFeeBot 管理者アラート", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": message}}
     ]
     if error:
         error_details = f"```{type(error).__name__}: {str(error)}```"
         blocks.append({
             "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*エラー詳細:*\n{error_details}"
-            }
+            "text": {"type": "mrkdwn", "text": f"*エラー詳細:*\n{error_details}"}
         })
-        text += f"\nエラー詳細:\n{error_details}" # textにも追加
+        text += f"\nエラー詳細:\n{error_details}"
 
-    _send_message(config.SLACK_ADMIN_CHANNEL_ID, text, blocks)
+    _send_message(cfg.admin_slack_channel_id, text, blocks)
 
 
 # --- 例: 実行テスト ---
 if __name__ == "__main__":
-    if not slack_client:
-        logger.error("Slackクライアントが初期化されていないため、テストを実行できません。")
-    else:
-        logger.info("Slack通知テスト開始...")
+    # Load config explicitly for the example run
+    main_config = _get_config()
+    slack_client_instance = _get_slack_client()
 
-        # 1. 通常通知テスト
+    if not slack_client_instance or not main_config:
+        logger.error("Slack client or config could not be initialized. Cannot run tests.")
+    else:
+        logger.info("Slack notification test starting...")
+
+        # 1. Normal notification test
         test_links = [
             "https://www.mhlw.go.jp/stf/newpage_example1.pdf",
             "https://www.mhlw.go.jp/stf/shingi/other/dl/example_document_ver2.pdf?download",
             "https://www.mhlw.go.jp/content/12401000/000987654.pdf"
         ]
-        logger.info(f"通常通知テスト (チャンネル: {config.SLACK_CHANNEL_ID})")
-        send_slack_notification(test_links)
+        if main_config.slack_channel_id:
+            logger.info(f"Testing normal notification (Channel: {main_config.slack_channel_id})")
+            send_slack_notification(test_links)
+        else:
+            logger.warning("SLACK_CHANNEL_ID not set, skipping normal notification test.")
 
-        # 2. 管理者アラートテスト
-        if config.SLACK_ADMIN_CHANNEL_ID:
-            logger.info(f"管理者アラートテスト (チャンネル: {config.SLACK_ADMIN_CHANNEL_ID})")
+        # 2. Admin alert test
+        if main_config.admin_slack_channel_id:
+            logger.info(f"Testing admin alert (Channel: {main_config.admin_slack_channel_id})")
             try:
-                # ダミーのエラーを発生させる
                 1 / 0
             except ZeroDivisionError as e:
-                send_admin_alert("テスト中にエラーが発生しました。", e)
+                send_admin_alert("Error occurred during testing.", e)
         else:
-            logger.info("管理者通知用チャンネルが設定されていないため、管理者アラートテストはスキップします。")
+            logger.info("Admin channel ID not set, skipping admin alert test.")
 
-        logger.info("Slack通知テスト完了。")
+        logger.info("Slack notification test finished.")
