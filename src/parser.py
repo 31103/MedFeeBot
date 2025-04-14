@@ -1,6 +1,6 @@
 import re
 from urllib.parse import urljoin
-from bs4 import BeautifulSoup, SoupStrainer
+from bs4 import BeautifulSoup, SoupStrainer, Tag # Import Tag
 from .logger import logger
 
 # PDFリンクを検出するための正規表現 (末尾のクエリパラメータも許容)
@@ -25,16 +25,26 @@ def extract_pdf_links(html_content: str, base_url: str) -> set[str]:
         only_a_tags = SoupStrainer("a")
         soup = BeautifulSoup(html_content, 'html.parser', parse_only=only_a_tags)
 
-        for a_tag in soup.find_all('a', href=True): # href属性を持つ<a>タグのみを対象
-            href = a_tag['href'].strip()
-            if href: # 空のhrefは無視
-                # PDFリンクかどうかを正規表現で判定
-                if PDF_LINK_PATTERN.search(href):
-                    # 相対URLを絶対URLに変換
-                    absolute_url = urljoin(base_url, href)
-                    if absolute_url not in pdf_links:
-                         logger.debug(f"PDFリンク発見: {absolute_url} (元: {href})")
-                         pdf_links.add(absolute_url)
+        for a_tag in soup.find_all('a', href=True): # href=True should yield Tags
+            # Explicit check for mypy
+            if isinstance(a_tag, Tag):
+                href_value = a_tag.get('href') # Use .get() for safer access
+                # Ensure href_value is a string and strip it
+                if isinstance(href_value, str):
+                    href = href_value.strip()
+                elif isinstance(href_value, list): # Handle case where href might be a list (less common)
+                    href = href_value[0].strip() if href_value else ""
+                else:
+                    href = "" # Skip if href is not a string or list
+
+                if href: # 空のhrefは無視
+                    # PDFリンクかどうかを正規表現で判定
+                    if PDF_LINK_PATTERN.search(href):
+                        # 相対URLを絶対URLに変換
+                        absolute_url = urljoin(base_url, href)
+                        if absolute_url not in pdf_links:
+                             logger.debug(f"PDFリンク発見: {absolute_url} (元: {href})")
+                             pdf_links.add(absolute_url)
 
         logger.info(f"HTML解析完了: {len(pdf_links)} 件のユニークなPDFリンクを発見しました。")
         return pdf_links

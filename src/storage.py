@@ -75,7 +75,13 @@ def find_new_urls(current_urls: Set[str]) -> Set[str]:
         logger.info(f"{len(new_urls)} 件の新規URLを発見しました。")
         # 新しいURLが見つかった場合、現在の全URLリストで既知リストを更新する
         updated_known_urls = known_urls.union(new_urls)
-        save_known_urls(updated_known_urls)
+        try:
+            save_known_urls(updated_known_urls)
+        except Exception as e:
+            # 保存に失敗しても、見つけた新規URLは返す（エラーはログで記録済み）
+            logger.error(f"find_new_urls内での既知URL保存中にエラーが発生しましたが、処理は継続します: {e}")
+            # ここで管理者通知を追加することも検討できる
+            # notifier.send_admin_alert("既知URLの保存に失敗しました。", error=e)
     else:
         logger.info("新規URLは見つかりませんでした。")
 
