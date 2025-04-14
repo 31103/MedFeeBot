@@ -1,214 +1,328 @@
 import json
-import os
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+from google.cloud import storage as gcs # Use alias to avoid conflict
+from google.cloud.exceptions import NotFound
 
 # Assuming src is importable
 from src import storage
+from src.config import Config # Import Config class
+
+# --- Constants ---
+TEST_BUCKET_NAME = "test-medfeebot-bucket"
+TEST_OBJECT_NAME = "data/known_urls.json"
 
 # --- Fixtures ---
 
 @pytest.fixture
-def temp_storage_file(tmp_path):
-    """Creates a temporary file path for storage tests."""
-    return tmp_path / "test_known_urls.json"
+def mock_gcs_client(mocker):
+    """Mocks the google.cloud.storage Client and its methods."""
+    mock_client = MagicMock(spec=gcs.Client)
+    mock_bucket = MagicMock(spec=gcs.Bucket)
+    mock_blob = MagicMock(spec=gcs.Blob)
 
-@pytest.fixture(autouse=True)
-def mock_local_storage_path(mocker, temp_storage_file):
-    """Mocks the LOCAL_STORAGE_PATH constant to use the temporary file."""
-    mocker.patch('src.storage.LOCAL_STORAGE_PATH', str(temp_storage_file))
-    # Ensure the file doesn't exist before each test unless explicitly created
-    if temp_storage_file.exists():
-        temp_storage_file.unlink()
-    yield str(temp_storage_file) # Provide the path to tests if needed
-    # Clean up after test if file exists
-    if temp_storage_file.exists():
-        temp_storage_file.unlink()
+    # Configure the mocks to return each other
+    # mocker.patch('src.storage.storage.Client', return_value=mock_client) # Patch the internal getter instead
+    mocker.patch('src.storage._get_gcs_client', return_value=mock_client) # Patch the getter function
+    mock_client.bucket.return_value = mock_bucket
+    mock_bucket.blob.return_value = mock_blob
 
+    # Return the individual mocks for configuration in tests
+    return mock_client, mock_bucket, mock_blob
+
+@pytest.fixture
+def test_config() -> Config:
+    """Provides a Config object for tests."""
+    return Config(
+        target_url="dummy", # Not used in storage tests
+        slack_api_token="dummy", # Not used
+        slack_channel_id="dummy", # Not used
+        known_urls_file_path=None, # Not used
+        log_level="DEBUG",
+        admin_slack_channel_id=None, # Not used
+        gcs_bucket_name=TEST_BUCKET_NAME,
+        gcs_object_name=TEST_OBJECT_NAME,
+        request_timeout=10,
+        request_retries=3,
+        request_retry_delay=1
+        # slack_secret_id is not part of Config dataclass
+    )
 
 # --- Test Cases for load_known_urls ---
 
-def test_load_known_urls_file_not_exists(temp_storage_file):
-    """Test load_known_urls when the file does not exist."""
-    assert not temp_storage_file.exists()
-    known_urls = storage.load_known_urls()
+def test_load_known_urls_gcs_not_found(mock_gcs_client, test_config):
+    """Test load_known_urls when the GCS object does not exist (first run)."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
+    # Set side effect specifically for this test
+    mock_blob.download_as_string.side_effect = NotFound("Object not found")
+
+    known_urls = storage.load_known_urls(test_config)
+
     assert known_urls == set()
+    mock_client.bucket.assert_called_once_with(TEST_BUCKET_NAME)
+    mock_bucket.blob.assert_called_once_with(TEST_OBJECT_NAME)
+    mock_blob.download_as_string.assert_called_once()
 
-def test_load_known_urls_success(temp_storage_file):
-    """Test load_known_urls with a valid JSON file."""
+def test_load_known_urls_success(mock_gcs_client, test_config):
+    """Test load_known_urls with a valid JSON list from GCS."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
     urls_list = ["http://a.pdf", "http://b.pdf"]
-    temp_storage_file.write_text(json.dumps(urls_list), encoding='utf-8')
-    known_urls = storage.load_known_urls()
+    # Set return value specifically for this test
+    mock_blob.download_as_string.return_value = json.dumps(urls_list).encode('utf-8')
+    # Reset side effect if set in other tests
+    mock_blob.download_as_string.side_effect = None
+
+    known_urls = storage.load_known_urls(test_config)
+
     assert known_urls == set(urls_list)
+    mock_blob.download_as_string.assert_called_once()
 
-def test_load_known_urls_empty_file(temp_storage_file):
-    """Test load_known_urls with an empty file (invalid JSON)."""
-    temp_storage_file.write_text("", encoding='utf-8')
-    known_urls = storage.load_known_urls()
-    assert known_urls == set() # Should handle JSONDecodeError
+def test_load_known_urls_empty_json_list(mock_gcs_client, test_config):
+    """Test load_known_urls with an empty JSON list from GCS."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
+    # Set return value specifically for this test
+    mock_blob.download_as_string.return_value = json.dumps([]).encode('utf-8')
+    # Reset side effect if set in other tests
+    mock_blob.download_as_string.side_effect = None
 
-def test_load_known_urls_invalid_json(temp_storage_file):
-    """Test load_known_urls with invalid JSON content."""
-    temp_storage_file.write_text("{invalid json", encoding='utf-8')
-    known_urls = storage.load_known_urls()
-    assert known_urls == set() # Should handle JSONDecodeError
+    known_urls = storage.load_known_urls(test_config)
 
-def test_load_known_urls_not_a_list(temp_storage_file):
-    """Test load_known_urls when JSON content is not a list."""
-    temp_storage_file.write_text(json.dumps({"key": "value"}), encoding='utf-8')
-    known_urls = storage.load_known_urls()
-    assert known_urls == set() # Should handle non-list content
+    assert known_urls == set()
+    mock_blob.download_as_string.assert_called_once()
 
-def test_load_known_urls_io_error(temp_storage_file, mocker):
-    """Test load_known_urls handles IOError during file read."""
-    # Create the file first
-    temp_storage_file.write_text("[]", encoding='utf-8')
-    # Mock open to raise IOError
-    mocker.patch('builtins.open', side_effect=IOError("Failed to read"))
-    known_urls = storage.load_known_urls()
-    assert known_urls == set() # Expect empty set on error
+
+def test_load_known_urls_invalid_json(mock_gcs_client, test_config):
+    """Test load_known_urls with invalid JSON content from GCS."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
+    # Set return value specifically for this test
+    mock_blob.download_as_string.return_value = b"{invalid json"
+    # Reset side effect if set in other tests
+    mock_blob.download_as_string.side_effect = None
+
+    with pytest.raises(ValueError, match="Failed to decode JSON"):
+        storage.load_known_urls(test_config)
+    mock_blob.download_as_string.assert_called_once()
+
+def test_load_known_urls_not_a_list(mock_gcs_client, test_config):
+    """Test load_known_urls when GCS JSON content is not a list."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
+    # Set return value specifically for this test
+    mock_blob.download_as_string.return_value = json.dumps({"key": "value"}).encode('utf-8')
+    # Reset side effect if set in other tests
+    mock_blob.download_as_string.side_effect = None
+
+    with pytest.raises(ValueError, match="Invalid data format"):
+        storage.load_known_urls(test_config)
+    mock_blob.download_as_string.assert_called_once()
+
+def test_load_known_urls_gcs_download_error(mock_gcs_client, test_config):
+    """Test load_known_urls handles GCS download errors."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
+    # Set side effect specifically for this test
+    mock_blob.download_as_string.side_effect = Exception("GCS API error")
+
+    with pytest.raises(Exception, match="GCS API error"):
+        storage.load_known_urls(test_config)
+    mock_blob.download_as_string.assert_called_once()
+
+def test_load_known_urls_missing_gcs_config():
+    """Test load_known_urls raises error if GCS config is missing."""
+    # Provide dummy values for other required fields
+    bad_config = Config(
+        target_url="dummy",
+        slack_api_token="dummy",
+        slack_channel_id="dummy",
+        known_urls_file_path="dummy",
+        gcs_bucket_name=None,
+        gcs_object_name=None
+    )
+    with pytest.raises(ValueError, match="GCS configuration missing"):
+        storage.load_known_urls(bad_config)
 
 # --- Test Cases for save_known_urls ---
 
-def test_save_known_urls_success(temp_storage_file):
-    """Test save_known_urls successfully saves data."""
+def test_save_known_urls_success(mock_gcs_client, test_config):
+    """Test save_known_urls successfully saves data to GCS."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
     urls_to_save = {"http://c.pdf", "http://a.pdf", "http://b.pdf"}
-    storage.save_known_urls(urls_to_save)
+    expected_json_string = json.dumps(sorted(list(urls_to_save)), ensure_ascii=False, indent=2)
 
-    assert temp_storage_file.exists()
-    content = temp_storage_file.read_text(encoding='utf-8')
-    loaded_list = json.loads(content)
-    # Check content and sorting
-    assert loaded_list == ["http://a.pdf", "http://b.pdf", "http://c.pdf"]
-    assert set(loaded_list) == urls_to_save
+    storage.save_known_urls(urls_to_save, test_config)
 
-def test_save_known_urls_empty_set(temp_storage_file):
+    mock_client.bucket.assert_called_once_with(TEST_BUCKET_NAME)
+    mock_bucket.blob.assert_called_once_with(TEST_OBJECT_NAME)
+    mock_blob.upload_from_string.assert_called_once_with(
+        expected_json_string,
+        content_type='application/json'
+    )
+
+def test_save_known_urls_empty_set(mock_gcs_client, test_config):
     """Test save_known_urls with an empty set."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
     urls_to_save = set()
-    storage.save_known_urls(urls_to_save)
+    expected_json_string = json.dumps([], ensure_ascii=False, indent=2)
 
-    assert temp_storage_file.exists()
-    content = temp_storage_file.read_text(encoding='utf-8')
-    loaded_list = json.loads(content)
-    assert loaded_list == []
+    storage.save_known_urls(urls_to_save, test_config)
 
-def test_save_known_urls_io_error(temp_storage_file, mocker):
-    """Test save_known_urls handles IOError during file write."""
+    mock_blob.upload_from_string.assert_called_once_with(
+        expected_json_string,
+        content_type='application/json'
+    )
+
+def test_save_known_urls_gcs_upload_error(mock_gcs_client, test_config, mocker):
+    """Test save_known_urls handles GCS upload errors (logs but doesn't raise)."""
+    mock_client, mock_bucket, mock_blob = mock_gcs_client
+    mock_logger_exception = mocker.patch('src.storage.logger.exception')
     urls_to_save = {"http://error.pdf"}
-    # Mock open to raise IOError
-    mocker.patch('builtins.open', side_effect=IOError("Failed to write"))
-    # We expect the function to log the error but not raise it
-    storage.save_known_urls(urls_to_save)
-    # Assert file doesn't exist or is empty (depending on when error occurs)
-    assert not temp_storage_file.exists() or temp_storage_file.read_text() == ""
+    mock_blob.upload_from_string.side_effect = Exception("GCS upload failed")
+
+    # Should not raise an exception
+    storage.save_known_urls(urls_to_save, test_config)
+
+    mock_blob.upload_from_string.assert_called_once()
+    mock_logger_exception.assert_called_once() # Check that error was logged
+
+def test_save_known_urls_missing_gcs_config():
+    """Test save_known_urls raises error if GCS config is missing."""
+    # Provide dummy values for other required fields
+    bad_config = Config(
+        target_url="dummy",
+        slack_api_token="dummy",
+        slack_channel_id="dummy",
+        known_urls_file_path="dummy",
+        gcs_bucket_name=None,
+        gcs_object_name=None
+    )
+    with pytest.raises(ValueError, match="GCS configuration missing"):
+        storage.save_known_urls(set(), bad_config)
+
 
 # --- Test Cases for find_new_urls ---
 
-def test_find_new_urls_first_run(temp_storage_file):
-    """Test find_new_urls on the first run (no existing file)."""
+# Patch load and save within the storage module itself for these tests
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_first_run(mock_save, mock_load, test_config):
+    """Test find_new_urls on the first run (load raises NotFound)."""
+    mock_load.side_effect = NotFound("GCS object not found")
     current_urls = {"http://first.pdf", "http://second.pdf"}
-    assert not temp_storage_file.exists()
 
-    new_urls = storage.find_new_urls(current_urls)
+    new_urls = storage.find_new_urls(current_urls, test_config)
 
     assert new_urls == set() # No new URLs reported on first run
-    # Check if the file was created and contains the current URLs
-    assert temp_storage_file.exists()
-    saved_urls = storage.load_known_urls() # Use load function to verify
-    assert saved_urls == current_urls
+    mock_load.assert_called_once_with(test_config)
+    # Check save was called with the current URLs for the first run
+    mock_save.assert_called_once_with(current_urls, test_config)
 
-def test_find_new_urls_no_new(temp_storage_file):
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_no_new(mock_save, mock_load, test_config):
     """Test find_new_urls when there are no new URLs."""
     initial_urls = {"http://a.pdf", "http://b.pdf"}
-    storage.save_known_urls(initial_urls) # Setup initial state
+    mock_load.return_value = initial_urls
+    current_urls = {"http://b.pdf", "http://a.pdf"} # Same URLs
 
-    current_urls = {"http://b.pdf", "http://a.pdf"} # Same URLs, different order
-    new_urls = storage.find_new_urls(current_urls)
+    new_urls = storage.find_new_urls(current_urls, test_config)
 
     assert new_urls == set()
-    # Verify file content remains unchanged
-    saved_urls = storage.load_known_urls()
-    assert saved_urls == initial_urls
+    mock_load.assert_called_once_with(test_config)
+    mock_save.assert_not_called() # Save should not be called
 
-def test_find_new_urls_with_new(temp_storage_file):
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_with_new(mock_save, mock_load, test_config):
     """Test find_new_urls when new URLs are found."""
     initial_urls = {"http://a.pdf", "http://b.pdf"}
-    storage.save_known_urls(initial_urls) # Setup initial state
-
+    mock_load.return_value = initial_urls
     current_urls = {"http://b.pdf", "http://c.pdf", "http://d.pdf"}
     expected_new = {"http://c.pdf", "http://d.pdf"}
-    expected_saved = {"http://a.pdf", "http://b.pdf", "http://c.pdf", "http://d.pdf"}
+    expected_saved = initial_urls.union(expected_new)
 
-    new_urls = storage.find_new_urls(current_urls)
+    new_urls = storage.find_new_urls(current_urls, test_config)
 
     assert new_urls == expected_new
-    # Verify the known URLs file was updated correctly
-    saved_urls = storage.load_known_urls()
-    assert saved_urls == expected_saved
+    mock_load.assert_called_once_with(test_config)
+    mock_save.assert_called_once_with(expected_saved, test_config)
 
-def test_find_new_urls_current_is_subset(temp_storage_file):
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_current_is_subset(mock_save, mock_load, test_config):
     """Test find_new_urls when current URLs are a subset of known URLs."""
     initial_urls = {"http://a.pdf", "http://b.pdf", "http://c.pdf"}
-    storage.save_known_urls(initial_urls) # Setup initial state
-
+    mock_load.return_value = initial_urls
     current_urls = {"http://b.pdf", "http://a.pdf"}
-    new_urls = storage.find_new_urls(current_urls)
+
+    new_urls = storage.find_new_urls(current_urls, test_config)
 
     assert new_urls == set()
-    # Verify file content remains unchanged
-    saved_urls = storage.load_known_urls()
-    assert saved_urls == initial_urls
+    mock_load.assert_called_once_with(test_config)
+    mock_save.assert_not_called()
 
-def test_find_new_urls_empty_current(temp_storage_file):
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_empty_current(mock_save, mock_load, test_config):
     """Test find_new_urls when the current URL list is empty."""
     initial_urls = {"http://a.pdf", "http://b.pdf"}
-    storage.save_known_urls(initial_urls) # Setup initial state
-
+    mock_load.return_value = initial_urls
     current_urls = set()
-    new_urls = storage.find_new_urls(current_urls)
+
+    new_urls = storage.find_new_urls(current_urls, test_config)
 
     assert new_urls == set()
-     # Verify file content remains unchanged
-    saved_urls = storage.load_known_urls()
-    assert saved_urls == initial_urls
+    mock_load.assert_called_once_with(test_config)
+    mock_save.assert_not_called()
 
-def test_find_new_urls_load_error(temp_storage_file, mocker):
-    """Test find_new_urls handles error during load_known_urls."""
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_load_error_valueerror(mock_save, mock_load, test_config, mocker):
+    """Test find_new_urls handles ValueError during load."""
+    mock_logger_error = mocker.patch('src.storage.logger.error')
+    mock_load.side_effect = ValueError("Config missing")
     current_urls = {"http://a.pdf", "http://b.pdf"}
-    # Mock load_known_urls to simulate an error (e.g., return None or raise)
-    # Let's simulate it returning an empty set due to an internal error
-    mocker.patch('src.storage.load_known_urls', return_value=set())
-    mock_save = mocker.patch('src.storage.save_known_urls') # Also mock save
 
-    new_urls = storage.find_new_urls(current_urls)
+    new_urls = storage.find_new_urls(current_urls, test_config)
 
-    # If load fails (returns empty), it should behave like the first run
-    assert new_urls == set()
-    # Check that save was called with the current URLs
-    mock_save.assert_called_once_with(current_urls)
+    assert new_urls == set() # Should return empty set on load error
+    mock_load.assert_called_once_with(test_config)
+    mock_save.assert_not_called()
+    mock_logger_error.assert_called() # Check error was logged
+
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_load_error_exception(mock_save, mock_load, test_config, mocker):
+    """Test find_new_urls handles generic Exception during load."""
+    mock_logger_exception = mocker.patch('src.storage.logger.exception')
+    mock_load.side_effect = Exception("Unexpected GCS error")
+    current_urls = {"http://a.pdf", "http://b.pdf"}
+
+    new_urls = storage.find_new_urls(current_urls, test_config)
+
+    assert new_urls == set() # Should return empty set on load error
+    mock_load.assert_called_once_with(test_config)
+    mock_save.assert_not_called()
+    mock_logger_exception.assert_called() # Check error was logged
 
 
-def test_find_new_urls_save_error(temp_storage_file, mocker):
-    """Test find_new_urls handles error during save_known_urls."""
+@patch('src.storage.load_known_urls')
+@patch('src.storage.save_known_urls')
+def test_find_new_urls_save_error(mock_save, mock_load, test_config, mocker):
+    """Test find_new_urls handles error during save_known_urls but still returns new URLs."""
+    mock_logger_error = mocker.patch('src.storage.logger.error')
     initial_urls = {"http://a.pdf"}
-    storage.save_known_urls(initial_urls) # Setup initial state
-
+    mock_load.return_value = initial_urls
     current_urls = {"http://a.pdf", "http://b.pdf"}
     expected_new = {"http://b.pdf"}
+    expected_saved = initial_urls.union(expected_new)
 
-    # Mock save_known_urls to simulate an error (e.g., raise Exception)
-    mock_save = mocker.patch('src.storage.save_known_urls', side_effect=IOError("Disk full"))
+    # Mock save_known_urls to simulate an error
+    mock_save.side_effect = Exception("GCS upload failed")
 
     # Even if save fails, find_new_urls should still return the new URLs found
-    new_urls = storage.find_new_urls(current_urls)
+    new_urls = storage.find_new_urls(current_urls, test_config)
 
     assert new_urls == expected_new
+    mock_load.assert_called_once_with(test_config)
     # Check that save was called (even though it failed)
-    mock_save.assert_called_once_with(initial_urls.union(expected_new))
-    # The original file should remain unchanged because save failed
-    saved_urls = storage.load_known_urls() # Read the actual file content
-    assert saved_urls == initial_urls
-
-
-# Consider adding tests for error handling during file I/O within find_new_urls
-# by mocking open() or json.dump/load to raise exceptions.
+    mock_save.assert_called_once_with(expected_saved, test_config)
+    # Check that the error during save was logged
+    assert mock_logger_error.call_count >= 1 # Error is logged in save_known_urls and find_new_urls
