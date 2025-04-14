@@ -1,7 +1,8 @@
 import os
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from dotenv import load_dotenv
+from google.cloud import secretmanager
 
 # .env file loading is now done inside load_config()
 
@@ -24,18 +25,44 @@ class Config:
 
     # __post_init__ removed as validation is now done in load_config
 
+
+def _get_secret(secret_id: str) -> str:
+    """Retrieves a secret value from Google Cloud Secret Manager."""
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        response = client.access_secret_version(name=secret_id)
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        logging.error(f"Failed to access secret: {secret_id}. Error: {e}")
+        raise ValueError(f"Failed to access secret: {secret_id}") from e
+
+
 def load_config() -> Config:
-    """Loads configuration from environment variables and returns a Config object."""
-    load_dotenv() # Ensure .env is loaded whenever config is requested
+    """
+    Loads configuration from environment variables and Secret Manager,
+    returning a Config object.
+    Prioritizes Secret Manager for SLACK_API_TOKEN if SLACK_SECRET_ID is set.
+    """
+    load_dotenv() # Load .env for local development primarily
 
     target_url = os.getenv("TARGET_URL", "")
     if not target_url:
         raise ValueError("Environment variable 'TARGET_URL' is not set.")
 
-    slack_api_token = os.getenv("SLACK_API_TOKEN", "")
-    if not slack_api_token:
-        raise ValueError("Environment variable 'SLACK_API_TOKEN' is not set.")
+    # --- Slack API Token Handling ---
+    slack_secret_id = os.getenv("SLACK_SECRET_ID")
+    if slack_secret_id:
+        logging.info(f"Attempting to load Slack token from Secret Manager: {slack_secret_id}")
+        slack_api_token = _get_secret(slack_secret_id)
+    else:
+        logging.info("SLACK_SECRET_ID not set, attempting to load SLACK_API_TOKEN from environment.")
+        slack_api_token = os.getenv("SLACK_API_TOKEN", "")
 
+    if not slack_api_token:
+        # This error occurs if neither SLACK_SECRET_ID nor SLACK_API_TOKEN yields a value
+        raise ValueError("Slack API token could not be loaded. Set SLACK_SECRET_ID (GCP) or SLACK_API_TOKEN (local).")
+
+    # --- Other Configurations ---
     slack_channel_id = os.getenv("SLACK_CHANNEL_ID", "")
     if not slack_channel_id:
         raise ValueError("Environment variable 'SLACK_CHANNEL_ID' is not set.")
