@@ -9,6 +9,9 @@ pytest-mock
 mypy
 types-requests # For requests library stubs
 
+# Cloud Functions Emulation
+functions-framework
+
 # Linting (Optional, but recommended)
 # flake8
 # black
