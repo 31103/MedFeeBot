@@ -2,7 +2,7 @@ import os
 import logging
 from dataclasses import dataclass
 from dotenv import load_dotenv
-from google.cloud import secretmanager
+from google.cloud import secretmanager as sm # Correct import
 
 # .env file loading is now done inside load_config()
 
@@ -26,15 +26,14 @@ class Config:
     # __post_init__ removed as validation is now done in load_config
 
 
-def _get_secret(secret_id: str) -> str:
-    """Retrieves a secret value from Google Cloud Secret Manager."""
-    try:
-        client = secretmanager.SecretManagerServiceClient()
-        response = client.access_secret_version(name=secret_id)
-        return response.payload.data.decode("UTF-8")
-    except Exception as e:
-        logging.error(f"Failed to access secret: {secret_id}. Error: {e}")
-        raise ValueError(f"Failed to access secret: {secret_id}") from e
+def access_secret_version(project_id: str, secret_id: str, version_id: str = "latest") -> str:
+    """
+    Access the payload for the given secret version.
+    """
+    client = sm.SecretManagerServiceClient() # Use the aliased import
+    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("UTF-8")
 
 
 def load_config() -> Config:
@@ -53,7 +52,7 @@ def load_config() -> Config:
     slack_secret_id = os.getenv("SLACK_SECRET_ID")
     if slack_secret_id:
         logging.info(f"Attempting to load Slack token from Secret Manager: {slack_secret_id}")
-        slack_api_token = _get_secret(slack_secret_id)
+        slack_api_token = access_secret_version(slack_secret_id)
     else:
         logging.info("SLACK_SECRET_ID not set, attempting to load SLACK_API_TOKEN from environment.")
         slack_api_token = os.getenv("SLACK_API_TOKEN", "")
