@@ -1,5 +1,6 @@
 import pytest
-from src.parser import extract_pdf_links
+from src.parser import extract_pdf_links, extract_hospital_document_info # Import the new function
+from typing import List, Dict # For type hinting expected results
 
 # --- Test Data ---
 
@@ -151,3 +152,122 @@ def test_extract_pdf_links_exception_handling(mocker):
 
 # Consider adding tests for extremely large HTML if performance is a concern.
 # Consider adding tests for different encodings if that's relevant.
+
+
+# --- Test Data for extract_hospital_document_info ---
+
+HOSPITAL_BASE_URL = "https://www.hospital.or.jp/site/ministry/"
+
+HTML_HOSPITAL_SITE_VALID = """
+<html><body>
+<div class="isotope-wrap">
+  <div class="col-12 isotope-item" data-filter="Category 1">
+    <div class="fs13">2025.04.16 <span class="h_new"></span></div>
+    <div><div class="ic_mhlw_hoken ic_575r"></div>
+    <p class="fs_p ic_140">
+    <a href="/site/news/file/1744877060.pdf" target="_blank" class="type1">【事務連絡】「番号法等一部改正法等の施行に伴う保険局及び社会・援護局関係通知の一部改正について」の一部訂正について</a></p></div>
+  </div>
+  <div class="col-12 isotope-item" data-filter="Category 2">
+    <div class="fs13">2025.04.15</div>
+    <div><p class="fs_p ic_140">
+    <a href="another/relative/doc.pdf?v=1" target="_blank">Another Document Title</a></p></div>
+  </div>
+  <div class="col-12 isotope-item" data-filter="Category 1">
+    <div class="fs13"> 2025.04.14 (extra space) </div>
+    <div><p class="fs_p"> <!-- Missing ic_140 class -->
+    <a href="https://external.com/external.pdf">External Document</a></p></div>
+  </div>
+</div>
+</body></html>
+"""
+EXPECTED_HOSPITAL_SITE_VALID: List[Dict[str, str]] = [
+    {
+        'date': '2025.04.16',
+        'title': '【事務連絡】「番号法等一部改正法等の施行に伴う保険局及び社会・援護局関係通知の一部改正について」の一部訂正について',
+        'url': 'https://www.hospital.or.jp/site/news/file/1744877060.pdf'
+    },
+    {
+        'date': '2025.04.15',
+        'title': 'Another Document Title',
+        'url': 'https://www.hospital.or.jp/site/ministry/another/relative/doc.pdf?v=1' # Resolved relative URL
+    },
+    {
+        'date': '2025.04.14',
+        'title': 'External Document',
+        'url': 'https://external.com/external.pdf' # Absolute URL preserved
+    }
+]
+
+HTML_HOSPITAL_SITE_MISSING_DATE = """
+<html><body>
+<div class="col-12 isotope-item">
+  <!-- Missing date div -->
+  <div><p class="fs_p ic_140"><a href="doc1.pdf">Doc 1</a></p></div>
+</div>
+</body></html>
+"""
+EXPECTED_HOSPITAL_SITE_MISSING_DATE: List[Dict[str, str]] = [] # Should not be included if date is missing
+
+HTML_HOSPITAL_SITE_MISSING_TITLE_LINK = """
+<html><body>
+<div class="col-12 isotope-item">
+  <div class="fs13">2025.04.17</div>
+  <div><p class="fs_p ic_140">No link here</p></div> <!-- Missing <a> tag -->
+</div>
+</body></html>
+"""
+EXPECTED_HOSPITAL_SITE_MISSING_TITLE_LINK: List[Dict[str, str]] = [] # Should not be included if link/title is missing
+
+HTML_HOSPITAL_SITE_NOT_PDF = """
+<html><body>
+<div class="col-12 isotope-item">
+  <div class="fs13">2025.04.18</div>
+  <div><p class="fs_p ic_140"><a href="document.html">Not a PDF</a></p></div>
+</div>
+</body></html>
+"""
+EXPECTED_HOSPITAL_SITE_NOT_PDF: List[Dict[str, str]] = [] # Should not be included if link is not PDF
+
+HTML_HOSPITAL_SITE_NO_ITEMS = """
+<html><body><p>No relevant items found.</p></body></html>
+"""
+EXPECTED_HOSPITAL_SITE_NO_ITEMS: List[Dict[str, str]] = []
+
+HTML_HOSPITAL_SITE_MALFORMED_DATE = """
+<html><body>
+<div class="col-12 isotope-item">
+  <div class="fs13">Invalid Date Format</div> <!-- Date format doesn't match regex -->
+  <div><p class="fs_p ic_140"><a href="doc2.pdf">Doc 2</a></p></div>
+</div>
+</body></html>
+"""
+EXPECTED_HOSPITAL_SITE_MALFORMED_DATE: List[Dict[str, str]] = [] # Should not be included if date format is wrong
+
+
+# --- Test Cases for extract_hospital_document_info ---
+
+@pytest.mark.parametrize(
+    "html_content, base_url, expected_documents",
+    [
+        (HTML_HOSPITAL_SITE_VALID, HOSPITAL_BASE_URL, EXPECTED_HOSPITAL_SITE_VALID),
+        (HTML_HOSPITAL_SITE_MISSING_DATE, HOSPITAL_BASE_URL, EXPECTED_HOSPITAL_SITE_MISSING_DATE),
+        (HTML_HOSPITAL_SITE_MISSING_TITLE_LINK, HOSPITAL_BASE_URL, EXPECTED_HOSPITAL_SITE_MISSING_TITLE_LINK),
+        (HTML_HOSPITAL_SITE_NOT_PDF, HOSPITAL_BASE_URL, EXPECTED_HOSPITAL_SITE_NOT_PDF),
+        (HTML_HOSPITAL_SITE_NO_ITEMS, HOSPITAL_BASE_URL, EXPECTED_HOSPITAL_SITE_NO_ITEMS),
+        (HTML_HOSPITAL_SITE_MALFORMED_DATE, HOSPITAL_BASE_URL, EXPECTED_HOSPITAL_SITE_MALFORMED_DATE),
+        (HTML_EMPTY, HOSPITAL_BASE_URL, EXPECTED_HOSPITAL_SITE_NO_ITEMS), # Empty HTML should yield empty list
+    ],
+)
+def test_extract_hospital_document_info(html_content, base_url, expected_documents):
+    """Test extract_hospital_document_info with various HTML structures."""
+    result = extract_hospital_document_info(html_content, base_url)
+    # Sort both lists of dictionaries by URL for consistent comparison
+    result_sorted = sorted(result, key=lambda x: x['url'])
+    expected_sorted = sorted(expected_documents, key=lambda x: x['url'])
+    assert result_sorted == expected_sorted
+
+def test_extract_hospital_document_info_exception_handling(mocker):
+    """Test that extract_hospital_document_info returns an empty list on unexpected errors."""
+    mocker.patch('src.parser.BeautifulSoup', side_effect=Exception("Parsing failed unexpectedly"))
+    result = extract_hospital_document_info("<html></html>", HOSPITAL_BASE_URL)
+    assert result == []

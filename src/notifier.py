@@ -83,62 +83,72 @@ def _send_message(channel_id: str, text: str, blocks: list | None = None) -> boo
         logger.exception(f"Unexpected error sending Slack message (Channel: {channel_id}): {e}")
         return False
 
-def send_slack_notification(new_pdf_links: list[str]):
+from typing import List, Dict # Add Dict for type hinting
+
+# ... (rest of the imports and _get_slack_client, _get_config) ...
+
+def send_slack_notification(new_documents: List[Dict[str, str]], cfg: Config):
     """
-    新規PDFリンクのリストを整形してSlackのメインチャンネルに通知する。
+    新規文書情報（日付、タイトル、URL）のリストを整形してSlackのメインチャンネルに通知する。
 
     Args:
-        new_pdf_links (list[str]): 新しく発見されたPDFファイルのURLリスト。
+        new_documents (List[Dict[str, str]]): 新しく発見された文書情報のリスト。
+                                                各辞書は 'date', 'title', 'url' キーを持つ。
+        cfg (Config): アプリケーション設定。
     """
-    cfg = _get_config()
-    if not cfg:
-        logger.error("Configuration not loaded. Cannot send Slack notification.")
-        return
+    # cfg is now passed as an argument, no need for _get_config() here
     if not _get_slack_client(): # Ensure client can be initialized
         logger.error("Slack client not available. Cannot send notification.")
         return
 
-    if not new_pdf_links:
-        logger.info("No new PDF links found, skipping Slack notification.")
+    if not new_documents:
+        logger.info("No new documents found, skipping Slack notification.")
         return
 
     if not cfg.slack_channel_id:
         logger.error("SLACK_CHANNEL_ID is not configured. Cannot send notification.")
         return
 
-    num_links = len(new_pdf_links)
-    text = f"📄 新規PDF通知 ({num_links}件)\n厚生労働省サイトで新しいPDFファイルが検出されました。"
+    num_documents = len(new_documents)
+    # Update fallback text
+    text = f"📄 新規文書通知 ({num_documents}件)\n監視対象サイトで新しい文書が検出されました。"
 
+    # Update Block Kit message
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"📄 新規PDF通知 ({num_links}件)", "emoji": True}
+            "text": {"type": "plain_text", "text": f"📄 新規文書通知 ({num_documents}件)", "emoji": True}
         },
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"厚生労働省サイト (<{cfg.target_url}|監視対象ページ>) で新しいPDFファイルが検出されました。"}
+            # Use the actual target URL from config
+            "text": {"type": "mrkdwn", "text": f"監視対象サイト (<{cfg.target_url}|ページ>) で新しい文書が検出されました。"}
         },
         {"type": "divider"}
     ]
 
-    link_limit = 10
-    for i, link in enumerate(new_pdf_links):
+    link_limit = 10 # Limit the number of detailed links shown
+    for i, doc in enumerate(new_documents):
         if i < link_limit:
-            filename = link.split('/')[-1].split('?')[0]
+            # Format message with date, title, and URL
+            date_str = doc.get('date', '日付不明')
+            title_str = doc.get('title', 'タイトル不明')
+            url_str = doc.get('url', '#') # Use '#' if URL is missing somehow
             blocks.append({
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": f"• <{link}|{filename}>"}
+                "text": {"type": "mrkdwn", "text": f"📅 *{date_str}*\n📄 <{url_str}|{title_str}>"}
             })
         elif i == link_limit:
              blocks.append({
                 "type": "context",
-                "elements": [{"type": "plain_text", "text": f"...他{num_links - link_limit}件のリンクがあります。", "emoji": True}]
+                "elements": [{"type": "plain_text", "text": f"...他{num_documents - link_limit}件の文書があります。", "emoji": True}]
             })
-             break
+             break # Stop adding more links after the limit
 
     _send_message(cfg.slack_channel_id, text, blocks)
 
-def send_admin_alert(message: str, error: Exception | None = None):
+# Pass config object to send_admin_alert as well for consistency and potential future use
+def send_admin_alert(message: str, error: Exception | None = None, config: Config | None = None):
     """
     管理者向けチャンネルにアラートメッセージを送信する。
 
@@ -146,15 +156,17 @@ def send_admin_alert(message: str, error: Exception | None = None):
         message (str): 送信するアラートメッセージ。
         error (Exception | None): 関連する例外オブジェクト (オプション)。
     """
-    cfg = _get_config()
+    # Use passed config or try to load it
+    cfg = config if config else _get_config()
     if not cfg:
-        logger.error("Configuration not loaded. Cannot send admin alert.")
+        logger.error("Configuration not available. Cannot send admin alert.")
         return
     if not _get_slack_client(): # Ensure client can be initialized
         logger.error("Slack client not available. Cannot send admin alert.")
         return
 
-    if not cfg.admin_slack_channel_id:
+    admin_channel_id = cfg.admin_slack_channel_id
+    if not admin_channel_id:
         logger.debug("Admin Slack channel ID not configured. Skipping admin alert.")
         return
 
@@ -171,10 +183,12 @@ def send_admin_alert(message: str, error: Exception | None = None):
         })
         text += f"\nエラー詳細:\n{error_details}"
 
-    _send_message(cfg.admin_slack_channel_id, text, blocks)
+    _send_message(admin_channel_id, text, blocks)
 
 
 # --- 例: 実行テスト ---
+# Note: This test block needs to be updated to reflect the new data structure
+# for send_slack_notification if run directly.
 if __name__ == "__main__":
     # Load config explicitly for the example run
     main_config = _get_config()

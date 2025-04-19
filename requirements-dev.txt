@@ -15,3 +15,6 @@ functions-framework
 # Linting (Optional, but recommended)
 # flake8
 # black
+
+# Local Development Environment Variables
+python-dotenv

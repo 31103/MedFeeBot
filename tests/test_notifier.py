@@ -7,6 +7,7 @@ from slack_sdk.errors import SlackApiError
 # Assuming src is importable
 from src import notifier
 from src.config import Config # Import Config class
+from typing import List, Dict # Add missing type hints
 
 # --- Constants ---
 TEST_CHANNEL_ID = "C123MAIN"
@@ -55,59 +56,69 @@ def mock_get_config(mocker, mock_app_config):
 
 # --- Test Cases for send_slack_notification ---
 
-# Add mock_app_config fixture
-def test_send_slack_notification_success(mock_slack_client, mock_app_config):
-    """Test successful notification for new PDF links."""
-    new_links = [PDF_LINK_1, PDF_LINK_2]
-    notifier.send_slack_notification(new_links)
+# --- Test Cases for send_slack_notification (Updated for new data format) ---
 
-    mock_slack_client.chat_postMessage.assert_called_once()
-    # Ensure _get_slack_client was called implicitly by send_slack_notification
-    # (mock_slack_client fixture already patches the instance, so we check the call)
+def test_send_slack_notification_success(mock_slack_client, mock_app_config):
+    """Test successful notification for new documents (date, title, url)."""
+    # Ensure type hint is present
+    new_docs: List[Dict[str, str]] = [
+        {'date': '2025.04.19', 'title': 'Document 1 Title', 'url': PDF_LINK_1},
+        {'date': '2025.04.18', 'title': 'Document 2 Title (with query)', 'url': PDF_LINK_2}
+    ]
+    # Pass the config object explicitly now
+    notifier.send_slack_notification(new_docs, mock_app_config)
+
     mock_slack_client.chat_postMessage.assert_called_once()
     call_args = mock_slack_client.chat_postMessage.call_args[1] # Get keyword args
 
-    # Access config via the fixture directly
     assert call_args['channel'] == mock_app_config.slack_channel_id
-    assert "新規PDF通知 (2件)" in call_args['text']
+    assert "新規文書通知 (2件)" in call_args['text'] # Updated text
     assert isinstance(call_args['blocks'], list)
-    # Check block structure basics
-    # Check block structure basics using mocked config values
-    assert call_args['blocks'][0]['type'] == 'header'
-    assert "新規PDF通知 (2件)" in call_args['blocks'][0]['text']['text']
-    assert call_args['blocks'][1]['type'] == 'section'
-    assert mock_app_config.target_url in call_args['blocks'][1]['text']['text']
-    assert call_args['blocks'][2]['type'] == 'divider'
-    # Check link blocks
-    assert call_args['blocks'][3]['type'] == 'section'
-    assert f"<{PDF_LINK_1}|doc1.pdf>" in call_args['blocks'][3]['text']['text']
-    assert call_args['blocks'][4]['type'] == 'section'
-    assert f"<{PDF_LINK_2}|doc2.pdf>" in call_args['blocks'][4]['text']['text']
 
-# Add mock_app_config fixture
-def test_send_slack_notification_many_links(mock_slack_client, mock_app_config):
-    """Test notification limits links shown and adds context."""
-    new_links = [f"http://example.com/doc{i}.pdf" for i in range(15)] # 15 links
-    notifier.send_slack_notification(new_links)
+    # Check block structure basics
+    blocks = call_args['blocks']
+    assert blocks[0]['type'] == 'header'
+    assert "新規文書通知 (2件)" in blocks[0]['text']['text'] # Updated header
+    assert blocks[1]['type'] == 'section'
+    assert mock_app_config.target_url in blocks[1]['text']['text'] # Check target URL presence
+    assert blocks[2]['type'] == 'divider'
+
+    # Check document blocks (new format)
+    assert blocks[3]['type'] == 'section'
+    assert "📅 *2025.04.19*" in blocks[3]['text']['text']
+    assert f"📄 <{PDF_LINK_1}|Document 1 Title>" in blocks[3]['text']['text']
+
+    assert blocks[4]['type'] == 'section'
+    assert "📅 *2025.04.18*" in blocks[4]['text']['text']
+    assert f"📄 <{PDF_LINK_2}|Document 2 Title (with query)>" in blocks[4]['text']['text']
+
+def test_send_slack_notification_many_docs(mock_slack_client, mock_app_config):
+    """Test notification limits documents shown and adds context."""
+    new_docs = [
+        {'date': f'2025.04.{20-i:02d}', 'title': f'Doc {i}', 'url': f'http://example.com/doc{i}.pdf'}
+        for i in range(15) # 15 documents
+    ]
+    notifier.send_slack_notification(new_docs, mock_app_config)
 
     mock_slack_client.chat_postMessage.assert_called_once()
     call_args = mock_slack_client.chat_postMessage.call_args[1]
     blocks = call_args['blocks']
 
-    assert len(blocks) == 3 + 10 + 1 # Header, Intro, Divider + 10 links + Context
+    assert len(blocks) == 3 + 10 + 1 # Header, Intro, Divider + 10 docs + Context
     assert blocks[-1]['type'] == 'context'
-    assert "他5件のリンクがあります" in blocks[-1]['elements'][0]['text']
+    assert "他5件の文書があります" in blocks[-1]['elements'][0]['text'] # Updated context text
 
-# Add mock_app_config fixture
-def test_send_slack_notification_no_links(mock_slack_client, mock_app_config):
-    """Test no notification is sent when the link list is empty."""
-    notifier.send_slack_notification([])
+def test_send_slack_notification_no_docs(mock_slack_client, mock_app_config):
+    """Test no notification is sent when the document list is empty."""
+    notifier.send_slack_notification([], mock_app_config) # Pass empty list and config
     mock_slack_client.chat_postMessage.assert_not_called()
 
-def test_send_slack_notification_no_channel_id(mock_slack_client, mock_get_config, mock_app_config):
-    """Test no notification is sent if SLACK_CHANNEL_ID is not set in config."""
-    # Modify the config returned by the mock _get_config
-    mock_app_config_no_channel = Config(
+# This test needs adjustment as _get_config is no longer used directly by send_slack_notification
+# Instead, we test passing a config with no channel ID
+def test_send_slack_notification_no_channel_id(mock_slack_client, mock_app_config):
+    """Test no notification is sent if SLACK_CHANNEL_ID is None in the passed config."""
+    # Create a config with slack_channel_id as None
+    config_no_channel = Config(
         target_url=mock_app_config.target_url,
         slack_api_token=mock_app_config.slack_api_token,
         slack_channel_id=None, # Set channel to None
@@ -115,53 +126,34 @@ def test_send_slack_notification_no_channel_id(mock_slack_client, mock_get_confi
         log_level=mock_app_config.log_level,
         admin_slack_channel_id=mock_app_config.admin_slack_channel_id,
     )
-    mock_get_config.return_value = mock_app_config_no_channel
+    test_doc = [{'date': '2025.04.19', 'title': 'Doc', 'url': PDF_LINK_1}]
 
-    notifier.send_slack_notification([PDF_LINK_1])
+    # Pass the modified config directly
+    notifier.send_slack_notification(test_doc, config_no_channel)
     mock_slack_client.chat_postMessage.assert_not_called()
 
-def test_send_slack_notification_client_init_fails(mocker, mock_get_config, mock_app_config):
-    """Test no notification if slack client initialization fails (e.g., no token)."""
-    # Modify config to have no token
-    mock_app_config_no_token = Config(
-        target_url=mock_app_config.target_url,
-        slack_api_token=None, # Set token to None
-        slack_channel_id=mock_app_config.slack_channel_id,
-        known_urls_file_path=mock_app_config.known_urls_file_path,
-        log_level=mock_app_config.log_level,
-        admin_slack_channel_id=mock_app_config.admin_slack_channel_id,
-    )
-    mock_get_config.return_value = mock_app_config_no_token
-    # Unpatch the client mock so the real init logic runs (and fails)
-    mocker.stopall() # Stop previous mocks
-    # Re-mock _get_config only
-    mocker.patch('src.notifier._get_config', return_value=mock_app_config_no_token)
-    # Reset the global client variable
-    notifier._slack_client = None
-    notifier._slack_config = None
-
-
-    notifier.send_slack_notification([PDF_LINK_1])
-    # We expect an error log, but no call to chat_postMessage
-    # Need to check logs or ensure no exception bubbles up.
-    # For simplicity, just check chat_postMessage wasn't called.
-    # Note: We can't easily assert chat_postMessage wasn't called if the client mock was removed.
-    # A better way might be to mock WebClient init to raise error or return None client.
-    # Let's mock _get_slack_client directly to return None
+def test_send_slack_notification_client_init_fails(mocker, mock_app_config):
+    """Test no notification if slack client initialization fails."""
+    # Mock _get_slack_client to return None, simulating init failure
     mocker.patch('src.notifier._get_slack_client', return_value=None)
-    notifier.send_slack_notification([PDF_LINK_1])
-    # Now we can assert the mock wasn't called (though it wouldn't exist anyway)
-    # This test setup is becoming complex due to module-level state.
+    test_doc = [{'date': '2025.04.19', 'title': 'Doc', 'url': PDF_LINK_1}]
 
-# --- Test Cases for send_admin_alert ---
+    notifier.send_slack_notification(test_doc, mock_app_config)
+    # chat_postMessage should not be called because _get_slack_client returned None
+    # We can't assert on mock_slack_client as it wasn't returned by the mocked getter
+    # Instead, we rely on the logic check: if _get_slack_client is None, send_slack_notification returns early.
+    # If we wanted to assert no call, we'd need the mock_slack_client fixture active,
+    # but also mock _get_slack_client to return it, which contradicts the test purpose.
 
-# Add mock_app_config fixture
+
+# --- Test Cases for send_admin_alert (Minor update: pass config) ---
+
 def test_send_admin_alert_success_no_error(mock_slack_client, mock_app_config):
     """Test successful admin alert without error details."""
     message = "This is a test alert."
-    notifier.send_admin_alert(message)
+    # Pass the config object
+    notifier.send_admin_alert(message, config=mock_app_config)
 
-    mock_slack_client.chat_postMessage.assert_called_once()
     mock_slack_client.chat_postMessage.assert_called_once()
     call_args = mock_slack_client.chat_postMessage.call_args[1]
 
@@ -175,14 +167,13 @@ def test_send_admin_alert_success_no_error(mock_slack_client, mock_app_config):
     assert message in call_args['blocks'][1]['text']['text']
     assert len(call_args['blocks']) == 2 # Header + Message
 
-# Add mock_app_config fixture
 def test_send_admin_alert_success_with_error(mock_slack_client, mock_app_config):
     """Test successful admin alert with error details."""
     message = "An error occurred during processing."
     error = ValueError("Something went wrong")
-    notifier.send_admin_alert(message, error)
+    # Pass the config object
+    notifier.send_admin_alert(message, error, config=mock_app_config)
 
-    mock_slack_client.chat_postMessage.assert_called_once()
     mock_slack_client.chat_postMessage.assert_called_once()
     call_args = mock_slack_client.chat_postMessage.call_args[1]
 
@@ -197,9 +188,10 @@ def test_send_admin_alert_success_with_error(mock_slack_client, mock_app_config)
     assert "*エラー詳細:*" in blocks[2]['text']['text']
     assert "```ValueError: Something went wrong```" in blocks[2]['text']['text']
 
-def test_send_admin_alert_no_admin_channel_id(mock_slack_client, mock_get_config, mock_app_config):
-    """Test no admin alert is sent if admin_slack_channel_id is None in config."""
-    mock_app_config_no_admin = Config(
+# Test passing config with admin_slack_channel_id=None
+def test_send_admin_alert_no_admin_channel_id(mock_slack_client, mock_app_config):
+    """Test no admin alert is sent if admin_slack_channel_id is None in the passed config."""
+    config_no_admin = Config(
         target_url=mock_app_config.target_url,
         slack_api_token=mock_app_config.slack_api_token,
         slack_channel_id=mock_app_config.slack_channel_id,
@@ -207,20 +199,18 @@ def test_send_admin_alert_no_admin_channel_id(mock_slack_client, mock_get_config
         log_level=mock_app_config.log_level,
         admin_slack_channel_id=None, # Set admin channel to None
     )
-    mock_get_config.return_value = mock_app_config_no_admin
 
-    notifier.send_admin_alert("Test message")
+    notifier.send_admin_alert("Test message", config=config_no_admin)
     mock_slack_client.chat_postMessage.assert_not_called()
 
-def test_send_admin_alert_client_init_fails(mocker, mock_get_config):
+def test_send_admin_alert_client_init_fails(mocker, mock_app_config):
     """Test no admin alert if slack client initialization fails."""
-    # Mock _get_slack_client directly to simulate failure
+    # Mock _get_slack_client to return None
     mocker.patch('src.notifier._get_slack_client', return_value=None)
-    # Ensure _get_config still works (or mock it if needed, already done by autouse fixture)
 
-    notifier.send_admin_alert("Test message")
-    # We expect an error log, but no call to chat_postMessage.
-    # Since _get_slack_client returns None, _send_message should exit early.
+    # Pass the config object
+    notifier.send_admin_alert("Test message", config=mock_app_config)
+    # _send_message should exit early because _get_slack_client returns None.
     # We can't easily assert chat_postMessage wasn't called as the client mock isn't active.
     # Relying on the logic check: if _get_slack_client is None, _send_message returns False early.
 
@@ -269,10 +259,10 @@ def test_send_message_slack_api_error(mock_slack_client, mock_app_config): # Add
     mock_response.__getitem__.side_effect = lambda key: {'error': 'channel_not_found'}[key] # Mock dict access
     mock_slack_client.chat_postMessage.side_effect = SlackApiError("API Error", mock_response)
 
-    # Use send_slack_notification to trigger _send_message
-    notifier.send_slack_notification([PDF_LINK_1])
+    # Use send_admin_alert to trigger _send_message (as send_slack_notification test is complex now)
+    notifier.send_admin_alert("Test alert", config=mock_app_config)
 
-    # Assert chat_postMessage was called
+    # Assert chat_postMessage was called (even though it failed)
     mock_slack_client.chat_postMessage.assert_called_once()
     # We expect the function to log the error but not raise it further.
     # We could use caplog fixture to assert log messages.
@@ -282,9 +272,9 @@ def test_send_message_other_exception(mock_slack_client, mock_app_config): # Add
     mock_slack_client.chat_postMessage.side_effect = ConnectionError("Network failed")
 
     # Use send_admin_alert to trigger _send_message
-    notifier.send_admin_alert("Test alert")
+    notifier.send_admin_alert("Test alert", config=mock_app_config)
 
-    # Assert chat_postMessage was called
+    # Assert chat_postMessage was called (even though it failed)
     mock_slack_client.chat_postMessage.assert_called_once()
     # Expect function to log the error but not raise it.
 

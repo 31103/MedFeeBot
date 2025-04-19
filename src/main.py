@@ -22,27 +22,39 @@ def run_check(cfg: Config) -> bool:
     try:
         # cfg = load_config() # Config is now passed as an argument
 
-        # 1. Fetch HTML content
-        html_content = fetcher.fetch_html(cfg) # Pass config object
+        # 1. Fetch HTML content using individual arguments
+        html_content = fetcher.fetch_html(
+            url=cfg.target_url,
+            timeout=cfg.request_timeout,
+            retries=cfg.request_retries,
+            delay=cfg.request_retry_delay
+        )
         if not html_content:
             # Error logged in fetcher, potentially send admin alert
             notifier.send_admin_alert(f"HTML fetch failed: {cfg.target_url}", config=cfg) # Pass config
             logger.error("HTML fetch failed, aborting run_check.")
             return False # Indicate failure
 
-        # 2. Extract PDF links from HTML
-        current_pdf_links = parser.extract_pdf_links(html_content, cfg.target_url) # Pass target_url from cfg
+        # 2. Extract document info (date, title, url) using the new parser function
+        # Assuming extract_hospital_document_info is the correct function for the new target
+        document_infos = parser.extract_hospital_document_info(html_content, cfg.target_url)
 
-        # 3. Find new PDF links by comparing with stored list (GCS)
-        # This function now requires the config object
-        new_urls = storage.find_new_urls(current_pdf_links, cfg) # Pass config
+        # 3. Find new URLs by comparing with stored list (GCS)
+        # Extract current URLs from the document info
+        current_urls = {doc['url'] for doc in document_infos}
+        # Find the difference (new URLs)
+        new_urls_set = storage.find_new_urls(current_urls, cfg) # Pass the set of URLs
 
-        # 4. Notify Slack if new links are found
-        if new_urls:
-            # Pass config to notifier as well, it might need it for admin alerts
-            notifier.send_slack_notification(sorted(list(new_urls)), cfg) # Pass config
+        # 4. Notify Slack if new documents are found
+        if new_urls_set:
+            # Filter document_infos to get only the new documents
+            new_documents = [doc for doc in document_infos if doc['url'] in new_urls_set]
+            logger.info(f"Found {len(new_documents)} new documents. Sending notification...")
+            # Pass the list of new document dictionaries to the notifier
+            # Note: notifier.send_slack_notification will need to be updated to handle this format
+            notifier.send_slack_notification(new_documents, cfg) # Pass list of dicts and config
         else:
-            logger.info("No new PDFs found. No Slack notification sent.")
+            logger.info("No new documents found. No Slack notification sent.")
 
         logger.info("run_check: Process completed successfully.")
         return True # Indicate success
