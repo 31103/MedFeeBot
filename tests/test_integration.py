@@ -1,21 +1,37 @@
 import pytest
 import json
-import json
 from unittest.mock import MagicMock, patch, ANY
 from google.cloud.exceptions import NotFound # Import NotFound for first run simulation
 
 # Modules to test
 from src import main
 from src.config import Config # Import Config class
-from src.config import Config # Import Config class
 
 # --- Constants ---
-TEST_URL = "http://mock-mhlw.test/page"
-MOCK_HTML = "<html><body><a href='doc1.pdf'>Doc 1</a> <a href='new_doc.pdf'>New Doc</a></body></html>"
-KNOWN_URLS_INITIAL = {"http://mock-mhlw.test/doc1.pdf"}
-CURRENT_URLS_FOUND = {"http://mock-mhlw.test/doc1.pdf", "http://mock-mhlw.test/new_doc.pdf"}
-NEW_URLS_EXPECTED = {"http://mock-mhlw.test/new_doc.pdf"}
-UPDATED_KNOWN_URLS = {"http://mock-mhlw.test/doc1.pdf", "http://mock-mhlw.test/new_doc.pdf"}
+TEST_TARGET_URL = "http://mock-hospital.test/site/ministry/" # Updated URL for context
+MOCK_HTML = """
+<html><body>
+<div class="isotope-wrap">
+  <div class="col-12 isotope-item">
+    <div class="fs13">2025.04.19</div>
+    <div><p class="fs_p ic_140"><a href="doc1.pdf">Known Doc 1</a></p></div>
+  </div>
+<div class="col-12 isotope-item">
+  <div class="fs13">2025.04.20</div>
+  <div><p class="fs_p ic_140"><a href="new_doc.pdf">New Doc 1</a></p></div>
+</div>
+</body></html>
+"""
+# Expected data structure from the new parser
+MOCK_DOC_INFO_KNOWN = {'date': '2025.04.19', 'title': 'Known Doc 1', 'url': 'http://mock-hospital.test/site/ministry/doc1.pdf'}
+MOCK_DOC_INFO_NEW = {'date': '2025.04.20', 'title': 'New Doc 1', 'url': 'http://mock-hospital.test/site/ministry/new_doc.pdf'}
+CURRENT_DOCS_FOUND = [MOCK_DOC_INFO_KNOWN, MOCK_DOC_INFO_NEW]
+CURRENT_URLS_FOUND_SET = {doc['url'] for doc in CURRENT_DOCS_FOUND} # Set of URLs for storage comparison
+
+KNOWN_URLS_INITIAL = {MOCK_DOC_INFO_KNOWN['url']} # Initial known URLs (set)
+NEW_DOCS_EXPECTED_FOR_NOTIFY = [MOCK_DOC_INFO_NEW] # List of dicts for notifier
+NEW_URLS_EXPECTED_SET = {MOCK_DOC_INFO_NEW['url']} # Set of new URLs for storage check
+UPDATED_KNOWN_URLS_SET = KNOWN_URLS_INITIAL.union(NEW_URLS_EXPECTED_SET) # Updated set for storage save check
 
 # --- Fixtures ---
 
@@ -25,7 +41,8 @@ def mock_fetcher(mocker):
 
 @pytest.fixture
 def mock_parser(mocker):
-    return mocker.patch('src.main.parser.extract_pdf_links')
+    # Mock the new parser function used in main.py
+    return mocker.patch('src.main.parser.extract_hospital_document_info')
 
 @pytest.fixture
 def mock_storage(mocker):
@@ -48,11 +65,9 @@ def mock_notifier(mocker):
 @pytest.fixture
 def mock_app_config() -> Config:
     """Returns a mock Config object for integration tests."""
-    # Note: mock_storage fixture handles the known_urls_file_path
-    """Returns a mock Config object for integration tests."""
     # Use dummy GCS paths as storage functions are mocked
     return Config(
-        target_url=TEST_URL,
+        target_url=TEST_TARGET_URL,
         slack_api_token="test-token",
         slack_channel_id="C123INTEGRATION",
         known_urls_file_path=None, # No longer used directly by mocked storage
@@ -101,20 +116,29 @@ def test_run_check_success_new_urls(mock_fetcher, mock_parser, mock_storage, moc
 
     # Configure mocks
     mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = CURRENT_URLS_FOUND
-    mock_load.return_value = KNOWN_URLS_INITIAL # Simulate loading initial URLs
+    mock_parser.return_value = CURRENT_DOCS_FOUND # Parser returns list of dicts
+    mock_load.return_value = KNOWN_URLS_INITIAL # Storage load returns set of URLs
 
     # Run the main function
     # Pass the config object explicitly to run_check
     main.run_check(mock_app_config)
 
     # Assertions
-    mock_fetcher.assert_called_once_with(mock_app_config) # fetch_html now takes the config object
+    # Check fetcher call with individual args
+    mock_fetcher.assert_called_once_with(
+        url=mock_app_config.target_url,
+        timeout=mock_app_config.request_timeout,
+        retries=mock_app_config.request_retries,
+        delay=mock_app_config.request_retry_delay
+    )
+    # Check parser call (new function name)
     mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
-    mock_load.assert_called_once_with(mock_app_config) # Check load was called with config
-    mock_save.assert_called_once_with(UPDATED_KNOWN_URLS, mock_app_config) # Check save was called with updated URLs and config
-    # Check notifier calls
-    mock_notify.assert_called_once_with(sorted(list(NEW_URLS_EXPECTED)), mock_app_config)
+    # Check storage load call
+    mock_load.assert_called_once_with(mock_app_config)
+    # Check storage save call with the updated set of URLs
+    mock_save.assert_called_once_with(UPDATED_KNOWN_URLS_SET, mock_app_config)
+    # Check notifier call with the list of new document dicts
+    mock_notify.assert_called_once_with(NEW_DOCS_EXPECTED_FOR_NOTIFY, mock_app_config)
     mock_alert.assert_not_called()
 
 # Add mock_app_config fixture
@@ -125,17 +149,22 @@ def test_run_check_success_no_new_urls(mock_fetcher, mock_parser, mock_storage, 
 
     # Configure mocks
     mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = CURRENT_URLS_FOUND # Same URLs as already known
-    mock_load.return_value = CURRENT_URLS_FOUND # Simulate loading the same URLs
+    mock_parser.return_value = CURRENT_DOCS_FOUND # Parser returns list of dicts
+    mock_load.return_value = CURRENT_URLS_FOUND_SET # Storage load returns the same set of URLs
 
     # Run the main function
     main.run_check(mock_app_config)
 
     # Assertions
-    mock_fetcher.assert_called_once_with(mock_app_config) # fetch_html now takes the config object
+    mock_fetcher.assert_called_once_with(
+        url=mock_app_config.target_url,
+        timeout=mock_app_config.request_timeout,
+        retries=mock_app_config.request_retries,
+        delay=mock_app_config.request_retry_delay
+    )
     mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
     mock_load.assert_called_once_with(mock_app_config)
-    mock_save.assert_not_called() # Save should not be called if no new URLs
+    mock_save.assert_not_called() # Save should not be called
     # Check notifier calls
     mock_notify.assert_not_called()
     mock_alert.assert_not_called()
@@ -148,19 +177,24 @@ def test_run_check_first_run(mock_fetcher, mock_parser, mock_storage, mock_notif
 
     # Configure mocks
     mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = CURRENT_URLS_FOUND
+    mock_parser.return_value = CURRENT_DOCS_FOUND # Parser returns list of dicts
     # Simulate GCS NotFound exception for first run
-    mock_load.side_effect = NotFound("GCS object not found")
+    mock_load.side_effect = NotFound("GCS object not found") # storage.load returns empty set in this case internally
 
     # Run the main function
     main.run_check(mock_app_config)
 
     # Assertions
-    mock_fetcher.assert_called_once_with(mock_app_config) # fetch_html now takes the config object
+    mock_fetcher.assert_called_once_with(
+        url=mock_app_config.target_url,
+        timeout=mock_app_config.request_timeout,
+        retries=mock_app_config.request_retries,
+        delay=mock_app_config.request_retry_delay
+    )
     mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
     mock_load.assert_called_once_with(mock_app_config)
-    # Check save was called with the currently found URLs for the first run
-    mock_save.assert_called_once_with(CURRENT_URLS_FOUND, mock_app_config)
+    # Check save was called with the set of currently found URLs for the first run
+    mock_save.assert_called_once_with(CURRENT_URLS_FOUND_SET, mock_app_config)
     # Check notifier calls (should not notify on first run)
     mock_notify.assert_not_called()
     mock_alert.assert_not_called()
@@ -178,7 +212,12 @@ def test_run_check_fetch_failure(mock_fetcher, mock_parser, mock_storage, mock_n
     main.run_check(mock_app_config)
 
     # Assertions
-    mock_fetcher.assert_called_once_with(mock_app_config) # fetch_html now takes the config object
+    mock_fetcher.assert_called_once_with(
+        url=mock_app_config.target_url,
+        timeout=mock_app_config.request_timeout,
+        retries=mock_app_config.request_retries,
+        delay=mock_app_config.request_retry_delay
+    )
     mock_parser.assert_not_called() # Should not parse if fetch fails
     mock_load.assert_not_called()   # Should not load if fetch fails
     mock_save.assert_not_called()   # Should not save if fetch fails
@@ -194,14 +233,19 @@ def test_run_check_parser_returns_empty(mock_fetcher, mock_parser, mock_storage,
 
     # Configure mocks
     mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = set() # Simulate parser finding nothing
+    mock_parser.return_value = [] # Simulate parser finding no documents (empty list)
     mock_load.return_value = KNOWN_URLS_INITIAL # Simulate loading initial URLs
 
     # Run the main function
     main.run_check(mock_app_config)
 
     # Assertions
-    mock_fetcher.assert_called_once_with(mock_app_config) # fetch_html now takes the config object
+    mock_fetcher.assert_called_once_with(
+        url=mock_app_config.target_url,
+        timeout=mock_app_config.request_timeout,
+        retries=mock_app_config.request_retries,
+        delay=mock_app_config.request_retry_delay
+    )
     mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
     mock_load.assert_called_once_with(mock_app_config)
     mock_save.assert_not_called() # Save should not be called if parser returns empty
@@ -225,10 +269,15 @@ def test_run_check_unexpected_exception(mock_fetcher, mock_parser, mock_storage,
     main.run_check(mock_app_config)
 
     # Assertions
-    mock_fetcher.assert_called_once_with(mock_app_config) # fetch_html now takes the config object
+    mock_fetcher.assert_called_once_with(
+        url=mock_app_config.target_url,
+        timeout=mock_app_config.request_timeout,
+        retries=mock_app_config.request_retries,
+        delay=mock_app_config.request_retry_delay
+    )
     mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
-    # Depending on where the exception occurs, load might or might not be called
-    # mock_load.assert_called_once_with(mock_app_config) # Or assert_not_called()
+    # Load might still be called before parser error
+    # mock_load.assert_called_once_with(mock_app_config) # This depends on exact execution order
     mock_save.assert_not_called() # Save should not happen if parser fails
     mock_notify.assert_not_called() # Should not notify if error occurred
     # Use the actual message from main.py

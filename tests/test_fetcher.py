@@ -4,7 +4,7 @@ from requests.exceptions import RequestException, HTTPError, ConnectionError, Ti
 from unittest.mock import MagicMock, patch
 
 from src.fetcher import fetch_html, HEADERS
-from src.config import Config # Import Config class
+from src.config import Config # Import Config class (still needed for mock_config fixture)
 
 TEST_URL = "http://test.com"
 MOCK_HTML_CONTENT = "<html><body>Test HTML</body></html>"
@@ -36,15 +36,16 @@ def mock_config() -> Config:
         request_retry_delay=1 # Mocked value
     )
 
-@pytest.fixture(autouse=True)
-def mock_load_config_in_fetcher(mocker, mock_config):
-    """Fixture to automatically mock load_config within src.fetcher."""
-    mocker.patch('src.fetcher.load_config', return_value=mock_config)
+# Remove the autouse fixture for load_config as fetch_html no longer calls it
+# @pytest.fixture(autouse=True)
+# def mock_load_config_in_fetcher(mocker, mock_config):
+#     """Fixture to automatically mock load_config within src.fetcher."""
+#     mocker.patch('src.fetcher.load_config', return_value=mock_config)
 
 # --- Test Cases ---
 
-# Add mock_config fixture to tests that need its values
-def test_fetch_html_success(mock_requests_get, mock_time_sleep, mock_config):
+# Pass timeout, retries, delay explicitly
+def test_fetch_html_success(mock_requests_get, mock_time_sleep):
     """Test fetch_html successfully retrieves HTML on the first attempt."""
     # Configure the mock response
     mock_response = MagicMock()
@@ -54,21 +55,22 @@ def test_fetch_html_success(mock_requests_get, mock_time_sleep, mock_config):
     mock_response.raise_for_status.return_value = None # No exception for 200
     mock_requests_get.return_value = mock_response
 
-    html = fetch_html(TEST_URL)
+    # Call fetch_html with explicit arguments
+    html = fetch_html(TEST_URL, timeout=10, retries=3, delay=1)
 
     assert html == MOCK_HTML_CONTENT
-    # Access mocked config values via the mock_config fixture directly
+    # Assert requests.get was called with the passed arguments
     mock_requests_get.assert_called_once_with(
         TEST_URL,
         headers=HEADERS,
-        timeout=mock_config.request_timeout # Use the fixture directly
+        timeout=10 # Assert against the passed value
     )
     # Ensure encoding was set based on apparent_encoding
     assert mock_response.encoding == 'utf-8'
     mock_time_sleep.assert_not_called() # No retries needed
 
-# Add mock_config fixture
-def test_fetch_html_http_error_retry_and_fail(mock_requests_get, mock_time_sleep, mock_config):
+# Pass timeout, retries, delay explicitly
+def test_fetch_html_http_error_retry_and_fail(mock_requests_get, mock_time_sleep):
     """Test fetch_html retries on HTTPError and fails after max retries."""
     # Configure the mock response to raise HTTPError
     mock_response = MagicMock()
@@ -76,65 +78,70 @@ def test_fetch_html_http_error_retry_and_fail(mock_requests_get, mock_time_sleep
     mock_response.raise_for_status.side_effect = HTTPError("Not Found")
     mock_requests_get.return_value = mock_response
 
-    html = fetch_html(TEST_URL)
+    # Call fetch_html with explicit arguments
+    html = fetch_html(TEST_URL, timeout=10, retries=3, delay=1)
 
     assert html is None
-    # Access mocked config values via the mock_config fixture directly
-    assert mock_requests_get.call_count == mock_config.request_retries
-    # Called N-1 times for retries
-    assert mock_time_sleep.call_count == mock_config.request_retries - 1
-    mock_time_sleep.assert_called_with(mock_config.request_retry_delay)
+    # Assert requests.get was called the correct number of times
+    assert mock_requests_get.call_count == 3 # Assert against the passed retries
+    # Assert time.sleep was called the correct number of times with the correct delay
+    assert mock_time_sleep.call_count == 3 - 1 # Assert against the passed retries
+    mock_time_sleep.assert_called_with(1) # Assert against the passed delay
 
-# Add mock_config fixture
-def test_fetch_html_connection_error_retry_and_fail(mock_requests_get, mock_time_sleep, mock_config):
+# Pass timeout, retries, delay explicitly
+def test_fetch_html_connection_error_retry_and_fail(mock_requests_get, mock_time_sleep):
     """Test fetch_html retries on ConnectionError and fails after max retries."""
     mock_requests_get.side_effect = ConnectionError("Cannot connect")
 
-    html = fetch_html(TEST_URL)
+    # Call fetch_html with explicit arguments
+    html = fetch_html(TEST_URL, timeout=10, retries=3, delay=1)
 
     assert html is None
-    # Access mocked config values via the mock_config fixture directly
-    assert mock_requests_get.call_count == mock_config.request_retries
-    assert mock_time_sleep.call_count == mock_config.request_retries - 1
+    assert mock_requests_get.call_count == 3
+    assert mock_time_sleep.call_count == 3 - 1
+    mock_time_sleep.assert_called_with(1)
 
-# Add mock_config fixture
-def test_fetch_html_timeout_retry_and_fail(mock_requests_get, mock_time_sleep, mock_config):
+# Pass timeout, retries, delay explicitly
+def test_fetch_html_timeout_retry_and_fail(mock_requests_get, mock_time_sleep):
     """Test fetch_html retries on Timeout and fails after max retries."""
     mock_requests_get.side_effect = Timeout("Request timed out")
 
-    html = fetch_html(TEST_URL)
+    # Call fetch_html with explicit arguments
+    html = fetch_html(TEST_URL, timeout=10, retries=3, delay=1)
 
     assert html is None
-    # Access mocked config values via the mock_config fixture directly
-    assert mock_requests_get.call_count == mock_config.request_retries
-    assert mock_time_sleep.call_count == mock_config.request_retries - 1
+    assert mock_requests_get.call_count == 3
+    assert mock_time_sleep.call_count == 3 - 1
+    mock_time_sleep.assert_called_with(1)
 
-# Add mock_config fixture
-def test_fetch_html_generic_request_exception_retry_and_fail(mock_requests_get, mock_time_sleep, mock_config):
+# Pass timeout, retries, delay explicitly
+def test_fetch_html_generic_request_exception_retry_and_fail(mock_requests_get, mock_time_sleep):
     """Test fetch_html retries on a generic RequestException."""
     mock_requests_get.side_effect = RequestException("Some request error")
 
-    html = fetch_html(TEST_URL)
+    # Call fetch_html with explicit arguments
+    html = fetch_html(TEST_URL, timeout=10, retries=3, delay=1)
 
     assert html is None
-    # Access mocked config values via the mock_config fixture directly
-    assert mock_requests_get.call_count == mock_config.request_retries
-    assert mock_time_sleep.call_count == mock_config.request_retries - 1
+    assert mock_requests_get.call_count == 3
+    assert mock_time_sleep.call_count == 3 - 1
+    mock_time_sleep.assert_called_with(1)
 
-# Add mock_config fixture
-def test_fetch_html_unexpected_exception_retry_and_fail(mock_requests_get, mock_time_sleep, mock_config):
+# Pass timeout, retries, delay explicitly
+def test_fetch_html_unexpected_exception_retry_and_fail(mock_requests_get, mock_time_sleep):
     """Test fetch_html retries on an unexpected non-RequestException."""
     mock_requests_get.side_effect = ValueError("Unexpected error during request")
 
-    html = fetch_html(TEST_URL)
+    # Call fetch_html with explicit arguments
+    html = fetch_html(TEST_URL, timeout=10, retries=3, delay=1)
 
     assert html is None
-    # Access mocked config values via the mock_config fixture directly
-    assert mock_requests_get.call_count == mock_config.request_retries
-    assert mock_time_sleep.call_count == mock_config.request_retries - 1
+    assert mock_requests_get.call_count == 3
+    assert mock_time_sleep.call_count == 3 - 1
+    mock_time_sleep.assert_called_with(1)
 
-# Add mock_config fixture
-def test_fetch_html_success_on_retry(mock_requests_get, mock_time_sleep, mock_config):
+# Pass timeout, retries, delay explicitly
+def test_fetch_html_success_on_retry(mock_requests_get, mock_time_sleep):
     """Test fetch_html succeeds on the second attempt."""
     # First call raises error, second call succeeds
     mock_error_response = MagicMock()
@@ -149,12 +156,12 @@ def test_fetch_html_success_on_retry(mock_requests_get, mock_time_sleep, mock_co
 
     mock_requests_get.side_effect = [mock_error_response, mock_success_response]
 
-    html = fetch_html(TEST_URL)
+    # Call fetch_html with explicit arguments
+    html = fetch_html(TEST_URL, timeout=10, retries=3, delay=1)
 
     assert html == MOCK_HTML_CONTENT
     assert mock_requests_get.call_count == 2 # Failed once, succeeded once
-    # Access mocked config values via the mock_config fixture directly
-    mock_time_sleep.assert_called_once_with(mock_config.request_retry_delay)
+    mock_time_sleep.assert_called_once_with(1) # Assert against the passed delay
     # Ensure encoding was set correctly on the successful response
     assert mock_success_response.encoding == 'shift_jis'
 

@@ -1,10 +1,10 @@
 # MedFeeBot
 
-厚生労働省のウェブサイトにおける診療報酬に関連するページを定期的に監視し、新たな通知文書（PDFファイル）が掲載された場合に、指定されたSlackチャンネルへ通知を行うボットです。
+医療関連のウェブサイトにおける通知文書（PDFファイル）を定期的に監視し、新たな文書が掲載された場合に、指定されたSlackチャンネルへ通知を行うボットです。
 
 ## 概要
 
-このボットは、厚生労働省の特定ページを監視し、新しいPDFリンクを検出するとSlackに通知します。これにより、診療報酬改定などの重要な情報を見逃すリスクを低減し、情報収集の効率化を図ります。
+このボットは、指定された医療関連ページを監視し、新しい文書（PDF）を検出するとSlackに通知します。これにより、重要な情報を見逃すリスクを低減し、情報収集の効率化を図ります。検出時には、文書の日付、名称、およびURLを抽出して通知します。
 
 現在はローカル環境での実行に対応しています。将来的にはGoogle Cloud
 Functionsでの運用を予定しています。
@@ -12,9 +12,9 @@ Functionsでの運用を予定しています。
 ## 機能
 
 - 指定されたURLのHTMLコンテンツを取得
-- HTML内からPDFファイルへのリンクを抽出
-- 既知のURLリスト（`known_urls.json`）と比較し、新規URLを検出
-- 新規URLが検出された場合、指定されたSlackチャンネルに通知
+- HTML内から文書情報（日付、名称、PDFファイルへのリンク）を抽出
+- 既知のURLリストと比較し、新規文書を検出
+- 新規文書が検出された場合、文書の日付、名称、URLを含む情報を指定されたSlackチャンネルに通知
 - 処理ログの出力
 
 ## スクリプトとしてのローカル実行
@@ -58,7 +58,7 @@ Functionsでの運用を予定しています。
 
    ```dotenv
    # .envファイルの内容例 (スクリプト実行用)
-   TARGET_URL="監視したい厚生労働省のページのURL"
+   TARGET_URL="監視したい医療関連ページのURL" # 例: https://www.hospital.or.jp/site/ministry/
    SLACK_API_TOKEN="xoxb-から始まるSlackボットトークン" # GCF環境ではSecret Manager経由
    SLACK_CHANNEL_ID="通知を送りたいSlackチャンネルのID"
    # --- オプション ---
@@ -68,7 +68,7 @@ Functionsでの運用を予定しています。
    # GCS_BUCKET_NAME="your-gcs-bucket-name" # GCS利用テスト時
    # GCS_OBJECT_NAME="path/to/your/known_urls.json" # GCS利用テスト時
    ```
-   - `TARGET_URL`: 監視対象のウェブページのURL。
+   - `TARGET_URL`: 監視対象の医療関連ウェブページのURL。
    - `SLACK_API_TOKEN`: Slackアプリのボットユーザートークン
      (`Bot User OAuth Token`)。`chat:write` スコープが必要です。**注意:** Cloud
      Functions 環境では `SLACK_SECRET_ID` を使用します。
@@ -93,10 +93,8 @@ python -m src.main
 ```
 
 スクリプトは `.env`
-ファイルから設定を読み込み、指定されたURLをチェックし、新規PDFが見つかればSlackに通知します。
-初回実行時は、検出されたすべてのPDFリンクが `known_urls.json`
-(または指定されたパス)
-に保存され、通知は行われません。2回目以降の実行で、前回以降に新たに追加されたPDFリンクが通知されます。
+ファイルから設定を読み込み、指定されたURLをチェックし、新規文書が見つかればSlackに通知します。
+初回実行時は、検出されたすべての文書のURLが既知のリストに保存され、通知は行われません。2回目以降の実行で、前回以降に新たに追加された文書が通知されます。通知メッセージには、文書の日付、名称、URLが含まれます。
 
 ## Google Cloud Functions での実行
 
@@ -105,7 +103,7 @@ python -m src.main
 Cloud Functions にデプロイする際には、以下の環境変数を設定する必要があります。
 
 - **必須:**
-  - `TARGET_URL`: 監視対象のウェブページのURL。
+  - `TARGET_URL`: 監視対象の医療関連ウェブページのURL。
   - `SLACK_CHANNEL_ID`: 通知を送信するSlackチャンネルのID。
   - `SLACK_SECRET_ID`: Slack API トークンが保存されている Secret Manager
     のシークレットID (例:
