@@ -443,6 +443,32 @@ HTML_CHUIKYO_EMPTY_TOPICS_LI = """
 """
 EXPECTED_CHUIKYO_EMPTY_TOPICS_LI: Optional[Dict[str, Any]] = None # Topics list cannot be empty
 
+HTML_CHUIKYO_HEADER_IN_TBODY = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr> <!-- This row acts like a header within tbody -->
+      <th>回数</th>
+      <th>開催日</th>
+      <th>議題</th>
+      <th>議事録</th>
+      <th>資料</th>
+    </tr>
+    <tr> <!-- Actual data starts here -->
+      <td class="m-table__highlight"> 第607回 </td>
+      <td class="m-table__highlight m-table__nowrap"> 2025年4月16日 </td>
+      <td> <ol><li>Real Topic</li></ol> </td>
+      <td> <a href="minutes.html" class="m-link">議事録</a> </td>
+      <td> <a href="materials.html" class="m-link">資料</a> </td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+# Current parser (tbody > tr:first-of-type) will grab the header row,
+# fail to find mandatory fields in the expected format, and should return None.
+EXPECTED_CHUIKYO_HEADER_IN_TBODY: Optional[Dict[str, Any]] = None
+
 
 # --- Test Cases for extract_latest_chuikyo_meeting ---
 
@@ -458,6 +484,7 @@ EXPECTED_CHUIKYO_EMPTY_TOPICS_LI: Optional[Dict[str, Any]] = None # Topics list 
         (HTML_CHUIKYO_MISSING_DATE_TD, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_DATE_TD),
         (HTML_CHUIKYO_MISSING_TOPICS_TD, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_TOPICS_TD),
         (HTML_CHUIKYO_EMPTY_TOPICS_LI, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_EMPTY_TOPICS_LI),
+        pytest.param(HTML_CHUIKYO_HEADER_IN_TBODY, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_HEADER_IN_TBODY, marks=pytest.mark.xfail(reason="Parser currently assumes first tbody row is data, not header")), # Test header row in tbody
         (HTML_EMPTY, CHUIKYO_BASE_URL, None), # Empty HTML should return None
     ],
 )

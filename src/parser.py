@@ -175,14 +175,14 @@ def extract_latest_chuikyo_meeting(html_content: str, base_url: str) -> Optional
             logger.warning("会議情報テーブル (<table class='m-tableFlex'>) が見つかりません。")
             return None
 
-        # 最初の <tr> (最新会議の行) を探す
-        first_row = table.find('tr')
-        if not first_row or not isinstance(first_row, Tag):
-            logger.warning("会議情報テーブル内に最初の行 (<tr>) が見つかりません。")
+        # *最初* の <tr> (最新会議のデータ行) を探す (CSSセレクタを使用)
+        target_row = table.select_one('tbody > tr:first-of-type') # tbody 直下の *最初* の tr を取得
+        if not target_row or not isinstance(target_row, Tag):
+            logger.warning("会議情報テーブルの tbody 内に最初の行 (データ行 <tr>) が見つかりません (CSS Selector failed)。")
             return None
 
-        # <td> 要素を取得
-        tds = first_row.find_all('td', recursive=False) # 直接の子要素のみ取得
+        # <td> または <th> 要素を取得 (最初の列が th の可能性があるため)
+        tds = target_row.find_all(['th', 'td'], recursive=False) # 直接の子要素のみ取得
 
         if len(tds) < 3: # 必須項目 (回数, 日付, 議題) が含まれる最低限のtd数
             logger.warning(f"会議情報テーブルの最初の行に必要なtd要素が不足しています (検出数: {len(tds)})。")
