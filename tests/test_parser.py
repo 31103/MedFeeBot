@@ -1,6 +1,6 @@
 import pytest
-from src.parser import extract_pdf_links, extract_hospital_document_info # Import the new function
-from typing import List, Dict # For type hinting expected results
+from src.parser import extract_pdf_links, extract_hospital_document_info, extract_latest_chuikyo_meeting # Import the new function
+from typing import List, Dict, Optional, Any # For type hinting expected results
 
 # --- Test Data ---
 
@@ -271,3 +271,230 @@ def test_extract_hospital_document_info_exception_handling(mocker):
     mocker.patch('src.parser.BeautifulSoup', side_effect=Exception("Parsing failed unexpectedly"))
     result = extract_hospital_document_info("<html></html>", HOSPITAL_BASE_URL)
     assert result == []
+
+
+# --- Test Data for extract_latest_chuikyo_meeting ---
+
+CHUIKYO_BASE_URL = "https://www.mhlw.go.jp/stf/shingi/shingi-chuo_128154.html"
+
+# Based on docs/shingi-chuo_128154.html and plan
+HTML_CHUIKYO_FULL = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr> <!-- First row is the target -->
+      <td class="m-table__highlight"> 第606回 </td>
+      <td class="m-table__highlight m-table__nowrap"> 2025年4月9日<br>（令和7年4月9日） </td>
+      <td>
+        <ol class="m-listMarker">
+          <li>1 部会・小委員会に属する委員の指名等について</li>
+          <li>2 医療機器の保険適用について</li>
+        </ol>
+      </td>
+      <td> <a href="/stf/newpage_56730.html" class="m-link">議事録</a> </td>
+      <td> <a href="/stf/newpage_56712.html" class="m-link">資料</a> </td>
+    </tr>
+    <tr> <!-- Second row should be ignored -->
+      <td class="m-table__highlight"> 第605回 </td>
+      <td> 2025年3月26日 </td>
+      <td> ... </td>
+      <td> ... </td>
+      <td> ... </td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+EXPECTED_CHUIKYO_FULL: Optional[Dict[str, Any]] = {
+    'id': '第606回',
+    'date': '2025年4月9日（令和7年4月9日）',
+    'topics': [
+        '1 部会・小委員会に属する委員の指名等について',
+        '2 医療機器の保険適用について'
+    ],
+    'minutes_url': 'https://www.mhlw.go.jp/stf/newpage_56730.html',
+    'minutes_text': '議事録',
+    'materials_url': 'https://www.mhlw.go.jp/stf/newpage_56712.html',
+    'materials_text': '資料'
+}
+
+HTML_CHUIKYO_NO_OPTIONAL_LINKS = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <td class="m-table__highlight"> 第605回 </td>
+      <td class="m-table__highlight m-table__nowrap"> 2025年3月26日 </td>
+      <td>
+        <ol class="m-listMarker">
+          <li>議題A</li>
+        </ol>
+      </td>
+      <td><!-- No minutes link --></td>
+      <td><!-- No materials link --></td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+EXPECTED_CHUIKYO_NO_OPTIONAL_LINKS: Optional[Dict[str, Any]] = {
+    'id': '第605回',
+    'date': '2025年3月26日',
+    'topics': ['議題A'],
+    'minutes_url': None,
+    'minutes_text': None,
+    'materials_url': None,
+    'materials_text': None
+}
+
+HTML_CHUIKYO_TOPICS_AS_TEXT = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <td> 第604回 </td>
+      <td> 2025年3月12日 </td>
+      <td> 単一の議題テキスト </td> <!-- No <ol> -->
+      <td></td>
+      <td><a href="shiryo.pdf" class="m-link">資料のみ</a></td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+EXPECTED_CHUIKYO_TOPICS_AS_TEXT: Optional[Dict[str, Any]] = {
+    'id': '第604回',
+    'date': '2025年3月12日',
+    'topics': ['単一の議題テキスト'], # Should still extract the text
+    'minutes_url': None,
+    'minutes_text': None,
+    'materials_url': 'https://www.mhlw.go.jp/stf/shingi/shiryo.pdf', # Resolved URL
+    'materials_text': '資料のみ'
+}
+
+
+HTML_CHUIKYO_MISSING_TABLE = """
+<html><body><p>Table is missing</p></body></html>
+"""
+EXPECTED_CHUIKYO_MISSING_TABLE: Optional[Dict[str, Any]] = None
+
+HTML_CHUIKYO_MISSING_ROW = """
+<html><body><table class="m-tableFlex"><tbody></tbody></table></body></html>
+"""
+EXPECTED_CHUIKYO_MISSING_ROW: Optional[Dict[str, Any]] = None
+
+HTML_CHUIKYO_MISSING_ID_TD = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <!-- Missing ID TD -->
+      <td> 2025年4月9日 </td>
+      <td> <ol><li>Topic</li></ol> </td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+EXPECTED_CHUIKYO_MISSING_ID_TD: Optional[Dict[str, Any]] = None # ID is mandatory
+
+HTML_CHUIKYO_MISSING_DATE_TD = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <td> 第606回 </td>
+      <!-- Missing Date TD -->
+      <td> <ol><li>Topic</li></ol> </td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+EXPECTED_CHUIKYO_MISSING_DATE_TD: Optional[Dict[str, Any]] = None # Date is mandatory
+
+HTML_CHUIKYO_MISSING_TOPICS_TD = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <td> 第606回 </td>
+      <td> 2025年4月9日 </td>
+      <!-- Missing Topics TD -->
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+EXPECTED_CHUIKYO_MISSING_TOPICS_TD: Optional[Dict[str, Any]] = None # Topics are mandatory
+
+HTML_CHUIKYO_EMPTY_TOPICS_LI = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <td> 第606回 </td>
+      <td> 2025年4月9日 </td>
+      <td> <ol class="m-listMarker"></ol> </td> <!-- Empty list -->
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+EXPECTED_CHUIKYO_EMPTY_TOPICS_LI: Optional[Dict[str, Any]] = None # Topics list cannot be empty
+
+HTML_CHUIKYO_HEADER_IN_TBODY = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr> <!-- This row acts like a header within tbody -->
+      <th>回数</th>
+      <th>開催日</th>
+      <th>議題</th>
+      <th>議事録</th>
+      <th>資料</th>
+    </tr>
+    <tr> <!-- Actual data starts here -->
+      <td class="m-table__highlight"> 第607回 </td>
+      <td class="m-table__highlight m-table__nowrap"> 2025年4月16日 </td>
+      <td> <ol><li>Real Topic</li></ol> </td>
+      <td> <a href="minutes.html" class="m-link">議事録</a> </td>
+      <td> <a href="materials.html" class="m-link">資料</a> </td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+# Current parser (tbody > tr:first-of-type) will grab the header row,
+# fail to find mandatory fields in the expected format, and should return None.
+EXPECTED_CHUIKYO_HEADER_IN_TBODY: Optional[Dict[str, Any]] = None
+
+
+# --- Test Cases for extract_latest_chuikyo_meeting ---
+
+@pytest.mark.parametrize(
+    "html_content, base_url, expected_meeting_info",
+    [
+        (HTML_CHUIKYO_FULL, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_FULL),
+        (HTML_CHUIKYO_NO_OPTIONAL_LINKS, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_NO_OPTIONAL_LINKS),
+        (HTML_CHUIKYO_TOPICS_AS_TEXT, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_TOPICS_AS_TEXT),
+        (HTML_CHUIKYO_MISSING_TABLE, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_TABLE),
+        (HTML_CHUIKYO_MISSING_ROW, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_ROW),
+        (HTML_CHUIKYO_MISSING_ID_TD, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_ID_TD),
+        (HTML_CHUIKYO_MISSING_DATE_TD, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_DATE_TD),
+        (HTML_CHUIKYO_MISSING_TOPICS_TD, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_TOPICS_TD),
+        (HTML_CHUIKYO_EMPTY_TOPICS_LI, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_EMPTY_TOPICS_LI),
+        pytest.param(HTML_CHUIKYO_HEADER_IN_TBODY, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_HEADER_IN_TBODY, marks=pytest.mark.xfail(reason="Parser currently assumes first tbody row is data, not header")), # Test header row in tbody
+        (HTML_EMPTY, CHUIKYO_BASE_URL, None), # Empty HTML should return None
+    ],
+)
+def test_extract_latest_chuikyo_meeting(html_content, base_url, expected_meeting_info):
+    """Test extract_latest_chuikyo_meeting with various HTML structures."""
+    result = extract_latest_chuikyo_meeting(html_content, base_url)
+    assert result == expected_meeting_info
+
+def test_extract_latest_chuikyo_meeting_exception_handling(mocker):
+    """Test that extract_latest_chuikyo_meeting returns None on unexpected errors."""
+    mocker.patch('src.parser.BeautifulSoup', side_effect=Exception("Parsing failed unexpectedly"))
+    result = extract_latest_chuikyo_meeting("<html></html>", CHUIKYO_BASE_URL)
+    assert result is None

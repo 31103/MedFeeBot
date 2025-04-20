@@ -1,4 +1,4 @@
-# **アクティブコンテキスト: MedFeeBot (パーサー機能拡張 & デプロイフェーズ)**
+# **アクティブコンテキスト: MedFeeBot (複数URL監視対応 & デプロイフェーズ)**
 
 ## **1. 現在のフォーカス**
 
@@ -8,40 +8,59 @@
   バケット作成、テスト用 Slack チャンネル設定。
 - **CI/CD構築:** GitHub Actions 設定 (テスト、デプロイ)。
 - **ローカルエミュレータでの最終確認:** Functions Framework を使用した動作確認。
-- **パーサー機能拡張のデプロイ:**
-  新しい監視対象サイトへの対応を含むコードをデプロイする。
+- **複数URL監視機能のデプロイ:**
+  - PDF検知と会議開催検知の両方に対応したコードをデプロイする。
 
-## **2. 最近の変更 (パーサー機能拡張完了)**
+## **2. 最近の変更**
 
-- **監視対象URLの変更:**
-  - ローカル開発環境の `.env` ファイルの `TARGET_URL` を
-    `https://www.hospital.or.jp/site/ministry/` に変更。
-  - クラウド環境の環境変数も更新が必要。
-- **パーサー機能拡張:**
-  - `src/parser.py` に `extract_hospital_document_info`
-    関数を追加し、新しい監視対象サイトのHTML構造から文書の日付、名称、PDF
-    URLを抽出できるように実装。
-- **メインロジック修正:**
-  - `src/main.py` の `run_check`
-    関数を修正し、新しいパーサー関数からの戻り値（日付、タイトル、URLを含む辞書のリスト）を処理できるように変更。
-  - `fetcher.fetch_html`
-    の呼び出しを、Configオブジェクトではなく個別の引数（URL, timeout, retries,
-    delay）を渡すように修正。
-- **通知機能修正:**
-  - `src/notifier.py` の `send_slack_notification`
-    関数を修正し、新しい文書情報（日付、タイトル、URL）を含む辞書のリストを受け取り、整形されたSlackメッセージを生成できるように変更。
-- **依存関係追加:**
-  - ローカル開発環境での `.env` ファイル読み込みのために `requirements-dev.txt`
-    に `python-dotenv` を追加。
-- **テストコード更新:**
-  - `tests/test_fetcher.py` を修正し、`fetch_html` の引数変更に対応。
-  - `tests/test_parser.py` に新しいパーサー関数 `extract_hospital_document_info`
-    のテストを追加。
-  - `tests/test_notifier.py` を修正し、`send_slack_notification`
-    の引数および期待されるメッセージ形式の変更に対応。
-  - `tests/test_integration.py`
-    を修正し、全体の流れが新しいパーサーと通知形式で正しく動作することを検証するように更新。
+- **設定管理の拡張 (`src/config.py`, `.env`):**
+  - 監視対象URLを単一から複数（カンマ区切り）に変更 (`TARGET_URLS` 環境変数）。
+  - URLごとの設定（監視タイプ `pdf`/`meeting`、パーサー関数）を管理する
+    `URL_CONFIGS` 辞書を導入。
+  - 状態管理ファイル名を環境変数で設定可能に (`KNOWN_URLS_FILE`,
+    `LATEST_IDS_FILE`)。
+- **パーサーの追加 (`src/parser.py`):**
+  - 中医協総会ページから最新会議情報を抽出する `extract_latest_chuikyo_meeting`
+    関数を追加（アドホック実装）。
+  - 既存の `extract_hospital_document_info` は維持。
+- **ストレージ機能の拡張 (`src/storage.py`):**
+  - PDF検知の状態管理をURLごとの辞書形式 (`{url: [pdf_url]}`) に変更
+    (`load_known_urls`, `save_known_urls`, `find_new_pdf_urls`)。
+  - 会議開催検知用の状態管理（最新会議ID）関数 (`load_latest_meeting_ids`,
+    `save_latest_meeting_ids`) を追加。
+- **メインロジックの修正 (`src/main.py`):**
+  - `config.target_urls` をループ処理するように変更。
+  - URLごとの処理を `process_url` ヘルパー関数に分割。
+  - `config.url_configs` から設定を取得し、タイプ (`pdf`/`meeting`)
+    に応じて処理を分岐。
+  - 各タイプに対応するパーサー関数とストレージ関数を呼び出すように修正。
+- **通知機能の調整 (`src/notifier.py`):**
+  - `send_slack_notification` 関数の引数を汎用的なペイロード形式
+    (`{'type': ..., 'data': ..., 'source_url': ...}`) に変更。
+  - ペイロードの `type` に応じて、PDF通知用または会議通知用のBlock
+    Kitメッセージを生成するように修正。
+- **テストコードの追加・更新:**
+  - `tests/test_parser.py`: `extract_latest_chuikyo_meeting` のテストを追加。
+  - `tests/test_storage.py`:
+    新しい状態管理形式と関数に対応するようにテストを更新・追加。
+  - `tests/test_config.py`: 新しい設定項目 (`TARGET_URLS`, `URL_CONFIGS` など)
+    の読み込みテストを更新・追加。
+  - `tests/test_notifier.py`:
+    新しいペイロード形式とタイプ別メッセージ生成に対応するようにテストを更新。
+  - `tests/test_integration.py`:
+    複数URL処理、タイプ別分岐、新しい差分検知ロジックを含む全体の流れを検証するようにテストを更新。
 - **テスト実行:** `pytest` を実行し、全てのテストがパスすることを確認。
+- **ドキュメント更新:**
+  - `README.md`: 複数URL対応、新しい設定方法、開発者向け情報 (`URL_CONFIGS`)
+    を追記・更新。
+- **中医協パーサーの修正 (`src/parser.py`):**
+  - `extract_latest_chuikyo_meeting`
+    関数が、会議情報テーブルのヘッダー行を誤ってデータ行として解析し、WARNING
+    が発生する問題を修正。
+  - CSSセレクタ `tbody > tr:nth-of-type(2)`
+    を使用して、正しいデータ行（2番目の行）を取得するように変更。
+  - これにより、`python -m src.main` 実行時の WARNING
+    が解消され、`latest_ids.json` に正しい会議IDが記録されることを確認。
 
 ## **3. 次のステップ (開発計画フェーズ5: デプロイ)**
 
@@ -50,13 +69,15 @@
    - Cloud Functions デプロイ (ステージング)。
    - GCS バケット作成・設定。
    - テスト用 Slack チャンネル設定。
-   - **ステージング環境のCloud Functionsの環境変数 `TARGET_URL` を更新。**
+   - **ステージング環境のCloud Functionsの環境変数 `TARGET_URLS` を設定。**
+     (他に必要な環境変数も設定)
 2. **本番環境構築:**
    - GCP プロジェクト設定 (本番用)。
    - Cloud Functions デプロイ (本番)。
    - GCS バケット作成・設定。
    - 本番 Slack チャンネル設定。
-   - **本番環境のCloud Functionsの環境変数 `TARGET_URL` を更新。**
+   - **本番環境のCloud Functionsの環境変数 `TARGET_URLS` を設定。**
+     (他に必要な環境変数も設定)
 3. **CI/CD構築:**
    - GitHub Actions 設定 (テスト、デプロイ)。
 
@@ -78,11 +99,18 @@
   に記載された技術スタック、アーキテクチャ、開発プラクティスを採用する。
 - 永続化方法として、現状の要件では GCS 上の JSON
   ファイルがシンプルさとコスト面で最適と判断。
-- **監視対象URLを `https://www.hospital.or.jp/site/ministry/`
-  に変更し、これに対応するためパーサー機能を拡張することを決定。これはアドホックな対応とする。**
-- **`fetcher.fetch_html`
-  の引数をConfigオブジェクトから個別の値に変更し、テスト容易性を向上させることを決定。**
-- **Slack通知メッセージに文書の日付とタイトルを含めることを決定。**
+- **複数URL監視への対応:**
+  PDF検知と会議開催検知という異なる目的を持つ複数のURLを並行して監視できるようにシステムを拡張することを決定。
+- **設定駆動型アーキテクチャの採用:** `src/config.py` の `URL_CONFIGS`
+  により、URLごとの監視タイプとパーサー関数を定義し、メインロジックでの処理分岐を制御することを決定。
+- **中医協パーサーのアドホック実装:** 中医協総会ページの会議開催検知用パーサー
+  (`extract_latest_chuikyo_meeting`)
+  は、当該ページのHTML構造に特化したアドホックな実装とすることを決定。
+- **状態管理の分離:** PDF検知用の状態 (`known_urls.json`) と会議開催検知用の状態
+  (`latest_ids.json`) を別々のファイルで管理することを決定。
+- (変更なし) `fetcher.fetch_html` の引数をConfigオブジェクトから個別の値に変更。
+- (変更なし)
+  Slack通知メッセージに文書の日付とタイトルを含める（PDF通知の場合）。会議通知用のメッセージ形式を別途定義。
 
 ## **5. 重要なパターンと設定**
 
@@ -90,16 +118,22 @@
 - **コード品質:** 型アノテーション (`typing`, `mypy`) とテスト (`pytest`,
   現在カバレッジ 71%) を重視。
 - **設定管理:**
-  - ローカル開発では `.env` ファイルと環境変数 (`SLACK_API_TOKEN`, `TARGET_URL`
+  - ローカル開発では `.env` ファイルと環境変数 (`TARGET_URLS`, `SLACK_API_TOKEN`
     等) を使用。
-  - クラウド環境では Secret Manager (`SLACK_SECRET_ID`) と環境変数 (GCSパス等,
-    `TARGET_URL` 等) を使用する。 (`src/config.py` で実装済)
+  - クラウド環境では Secret Manager (`SLACK_SECRET_ID`) と環境変数
+    (`TARGET_URLS`, `GCS_BUCKET_NAME` 等) を使用する。 (`src/config.py`
+    で実装済)
+  - URLごとの設定は `src/config.py` 内の `URL_CONFIGS` 辞書で管理。
+- **状態管理:**
+  - PDF検知: GCS (またはローカル) の `known_urls.json` (デフォルト名) に
+    `{url: [pdf_url]}` 形式で保存。
+  - 会議検知: GCS (またはローカル) の `latest_ids.json` (デフォルト名) に
+    `{url: meeting_id}` 形式で保存。
 - **エラーハンドリング:**
   - 各モジュールで基本的な例外処理を実装。
-  - `storage.py` の `find_new_urls`
-    で保存エラーが発生しても処理を継続するように修正。
   - GCS アクセスエラーのハンドリングを実装済
-    (`storage.py`)。読み込みエラーは致命的、書き込みエラーは警告として処理。
+    (`storage.py`)。読み込みエラーは処理継続困難、書き込みエラーは警告として処理継続。
+  - URLごとの処理でエラーが発生しても、他のURLの処理は継続する (`main.py`)。
 - **モジュール構成:** `src` ディレクトリ以下に機能ごとにモジュールを分割
   (変更なし)。
 - **テスト戦略:** `pytest`
@@ -107,12 +141,13 @@
 - **Cloud Functions エントリーポイント:** `src/main.py` の `main_gcf` 関数
   (HTTPトリガー)。
 - **パーサーロジック:**
-  - 汎用的なPDFリンク抽出 (`extract_pdf_links`) と、特定のサイト
-    (`hospital.or.jp`) 向けの情報抽出 (`extract_hospital_document_info`)
-    を分離。
+  - URLごとに適切なパーサー関数を `URL_CONFIGS` で指定。
+  - `hospital.or.jp` 向けPDF情報抽出 (`extract_hospital_document_info`)。
+  - `mhlw.go.jp` 中医協向け会議情報抽出 (`extract_latest_chuikyo_meeting`)。
 - **通知メッセージ形式:**
-  - Slack Block Kit
-    を使用し、日付、タイトル、URLを含むリッチなメッセージを生成。
+  - Slack Block Kit を使用。
+  - `notifier.py` がペイロードの `type`
+    に応じてPDF用または会議用のメッセージを生成。
 
 ## **6. 学びと洞察**
 
@@ -140,5 +175,13 @@
 - (変更なし)
   プロジェクトは詳細な仕様書と開発計画に基づいており、明確なロードマップが存在する。
 - メモリバンクは、プロジェクトの進行に合わせて継続的に更新する必要がある。
-- **特定のサイト構造に対応するためのパーサーロジックは、サイト構造の変更に脆弱であるため、アドホックな対応として明確に区別することが重要。**
+- **特定のサイト構造に対応するためのパーサーロジックは、サイト構造の変更に脆弱であるため、アドホックな対応として明確に区別し、依存性を局所化することが重要。**
 - **関数の引数として設定値を明示的に渡すことで、単体テストにおけるモック設定が容易になり、テスト容易性が向上する。**
+- **設定駆動型アーキテクチャ (`URL_CONFIGS`)
+  は、新しい監視対象や監視タイプを追加する際の拡張性を高めるが、設定自体の管理が必要になる。**
+- **異なる目的（PDFリスト vs
+  最新ID）の状態管理は、それぞれに適したデータ構造とファイル分離が必要。**
+- **HTML構造の複雑さへの対応:**
+  ウェブサイトのHTML構造は想定と異なる場合があり（例: `tbody`
+  の最初の行が実質ヘッダー）、複数回の試行錯誤と詳細な調査（`read_file` や CSS
+  セレクタの活用）が必要になることがある。パーサーの実装は、このような構造変化に対してある程度の堅牢性を持たせるか、あるいは特定の構造に依存することを明確にしておく必要がある。

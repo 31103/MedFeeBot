@@ -14,8 +14,8 @@ from src.logger import setup_logger
         ("CRITICAL", logging.CRITICAL),
         ("debug", logging.DEBUG), # Test lowercase
         ("info", logging.INFO),
-        (None, logging.INFO), # Test default level
-        ("", logging.INFO), # Test default level for empty string
+        # (None, logging.INFO), # REMOVED: level_str is now mandatory
+        ("", logging.INFO), # Test default level for empty string (getattr handles this)
         ("INVALID", logging.INFO), # Test default level for invalid string
     ],
 )

@@ -1,8 +1,12 @@
 import time
 import requests
+import logging # Import logging
 from requests.exceptions import RequestException
-from .config import load_config, Config # Import load_config and Config
-from .logger import logger
+# from .config import load_config, Config # No longer needed here
+# from .logger import logger # REMOVE direct logger import
+
+# Get logger instance for this module
+logger = logging.getLogger(__name__)
 
 # 標準的なブラウザを模倣するUser-Agent
 HEADERS = {
@@ -65,19 +69,21 @@ def fetch_html(url: str, timeout: int = 30, retries: int = 3, delay: int = 5) ->
 
 # --- 例: 実行テスト ---
 if __name__ == "__main__":
-    try:
-        cfg_main = load_config()
-        test_url = cfg_main.target_url # 設定オブジェクトからURLを取得
-    except ValueError as e:
-        logger.error(f"設定の読み込みに失敗しました: {e}")
-        test_url = None
+    # Example usage requires setting up logger and getting URL differently now
+    # Setup logger for direct execution test
+    from logger import setup_logger # Import locally for example
+    setup_logger(level_str="INFO") # Setup with default level
 
-    if not test_url:
+    # Example URL (replace with a real one for testing)
+    test_url_example = "https://www.mhlw.go.jp/stf/newpage_21484.html" # Example URL
+
+    if not test_url_example:
         logger.error("テスト用のURLが設定されていません。")
     else:
-        html_content = fetch_html(test_url)
+        # Call fetch_html with default timeout/retries or specify them
+        html_content = fetch_html(test_url_example)
         if html_content:
-            logger.info(f"{test_url} からHTMLを取得しました (最初の500文字):")
+            logger.info(f"{test_url_example} からHTMLを取得しました (最初の500文字):")
             print(html_content[:500] + "...")
         else:
-            logger.error(f"{test_url} からHTMLを取得できませんでした。")
+            logger.error(f"{test_url_example} からHTMLを取得できませんでした。")
