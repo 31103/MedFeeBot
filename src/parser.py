@@ -2,7 +2,7 @@ import re
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup, SoupStrainer, Tag # Import Tag
 import re # 正規表現モジュールを追加
-from typing import List, Dict # 型ヒント用
+from typing import List, Dict, Optional, Any # 型ヒント用 (Optional, Any を追加)
 from .logger import logger
 
 # PDFリンクを検出するための正規表現 (末尾のクエリパラメータも許容)
@@ -145,6 +145,120 @@ def extract_hospital_document_info(html_content: str, base_url: str) -> List[Dic
     except Exception as e:
         logger.exception(f"HTML解析中に予期せぬエラーが発生しました (Hospital Site): {e}")
         return [] # エラー時は空のリストを返す
+
+
+def extract_latest_chuikyo_meeting(html_content: str, base_url: str) -> Optional[Dict[str, Any]]:
+    """
+    中医協総会ページ (mhlw.go.jp) のHTMLから最新の会議情報を抽出する (アドホック実装)。
+
+    Args:
+        html_content (str): 解析対象のHTMLコンテンツ。
+        base_url (str): HTMLコンテンツが取得された元のページのURL。相対パス解決用。
+
+    Returns:
+        Optional[Dict[str, Any]]: 抽出された最新会議情報の辞書、または見つからない/必須情報欠落の場合は None。
+            辞書のキー: 'id', 'date', 'topics', 'minutes_url', 'minutes_text', 'materials_url', 'materials_text'
+    """
+    logger.info(f"HTML解析開始 (Chukyo Meeting): {base_url} から最新会議情報を抽出します。")
+    meeting_info: Dict[str, Any] = {}
+
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # <table class="m-tableFlex"> を探す
+        table = soup.find('table', class_='m-tableFlex')
+        if not table or not isinstance(table, Tag):
+            logger.warning("会議情報テーブル (<table class='m-tableFlex'>) が見つかりません。")
+            return None
+
+        # 最初の <tr> (最新会議の行) を探す
+        first_row = table.find('tr')
+        if not first_row or not isinstance(first_row, Tag):
+            logger.warning("会議情報テーブル内に最初の行 (<tr>) が見つかりません。")
+            return None
+
+        # <td> 要素を取得
+        tds = first_row.find_all('td', recursive=False) # 直接の子要素のみ取得
+
+        if len(tds) < 3: # 必須項目 (回数, 日付, 議題) が含まれる最低限のtd数
+            logger.warning(f"会議情報テーブルの最初の行に必要なtd要素が不足しています (検出数: {len(tds)})。")
+            return None
+
+        # 1. 会議回数 (識別子)
+        # 計画では td.m-table__highlight だが、実際のHTML(docs/shingi-chuo_128154.html)を見ると
+        # 最初のtd自体がハイライトクラスを持っているわけではなく、中の要素が持っている可能性がある。
+        # より堅牢にするため、最初のtdのテキストを直接取得する。
+        meeting_info['id'] = tds[0].get_text(strip=True) if len(tds) > 0 and isinstance(tds[0], Tag) else None
+        if not meeting_info['id']:
+            logger.error("必須情報「会議回数」が取得できませんでした。")
+            return None
+
+
+        # 2. 開催日
+        # 計画では td.m-table__highlight.m-table__nowrap だが、実際のHTMLを見ると2番目のtdが該当
+        date_tag = tds[1] if len(tds) > 1 and isinstance(tds[1], Tag) else None
+        if date_tag:
+            meeting_info['date'] = date_tag.get_text(strip=True)
+        else:
+            logger.error("必須情報「開催日」が取得できませんでした。")
+            return None
+
+        # 3. 議題リスト
+        topics_list: List[str] = []
+        topics_container = tds[2] if len(tds) > 2 and isinstance(tds[2], Tag) else None
+        if topics_container:
+            # ol.m-listMarker > li を探す
+            topic_items = topics_container.select('ol.m-listMarker > li')
+            if topic_items:
+                 for item in topic_items:
+                     if isinstance(item, Tag):
+                         topics_list.append(item.get_text(strip=True))
+            else:
+                 # ol がない場合、td 直下のテキストを議題とみなす（構造変化への備え）
+                 topics_text = topics_container.get_text(strip=True)
+                 if topics_text:
+                     topics_list.append(topics_text) # 単一の議題として追加
+
+        if not topics_list: # 議題が一つも取得できなかった場合
+            logger.error("必須情報「議題」が取得できませんでした。")
+            return None
+        meeting_info['topics'] = topics_list
+
+        # 4. 議事録/要旨リンク (オプション)
+        meeting_info['minutes_url'] = None
+        meeting_info['minutes_text'] = None
+        minutes_container = tds[3] if len(tds) > 3 and isinstance(tds[3], Tag) else None
+        if minutes_container:
+            link_tag = minutes_container.find('a', class_='m-link', href=True)
+            if link_tag and isinstance(link_tag, Tag):
+                href_value = link_tag.get('href')
+                if isinstance(href_value, str):
+                    meeting_info['minutes_url'] = urljoin(base_url, href_value.strip())
+                    meeting_info['minutes_text'] = link_tag.get_text(strip=True)
+
+        # 5. 資料リンク (オプション)
+        meeting_info['materials_url'] = None
+        meeting_info['materials_text'] = None
+        materials_container = tds[4] if len(tds) > 4 and isinstance(tds[4], Tag) else None
+        if materials_container:
+            link_tag = materials_container.find('a', class_='m-link', href=True)
+            if link_tag and isinstance(link_tag, Tag):
+                href_value = link_tag.get('href')
+                if isinstance(href_value, str):
+                    meeting_info['materials_url'] = urljoin(base_url, href_value.strip())
+                    meeting_info['materials_text'] = link_tag.get_text(strip=True)
+
+        # 必須情報が揃っているか最終確認 (id, date, topics)
+        if not all(k in meeting_info and meeting_info[k] for k in ['id', 'date', 'topics']):
+             logger.error(f"必須情報が不足しているため、会議情報を返せません: {meeting_info}")
+             return None
+
+        logger.info(f"HTML解析完了 (Chukyo Meeting): 最新会議情報 ID={meeting_info.get('id')} を抽出しました。")
+        return meeting_info
+
+    except Exception as e:
+        logger.exception(f"HTML解析中に予期せぬエラーが発生しました (Chukyo Meeting): {e}")
+        return None
 
 
 # --- 例: 実行テスト ---
