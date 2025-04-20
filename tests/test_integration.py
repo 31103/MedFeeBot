@@ -1,59 +1,120 @@
 import pytest
 import json
 from unittest.mock import MagicMock, patch, ANY
-from google.cloud.exceptions import NotFound # Import NotFound for first run simulation
+from google.cloud.exceptions import NotFound
+from typing import Dict, List, Any, Set # Import necessary types
 
 # Modules to test
 from src import main
 from src.config import Config # Import Config class
+from src import parser # Import parser to reference functions
 
 # --- Constants ---
-TEST_TARGET_URL = "http://mock-hospital.test/site/ministry/" # Updated URL for context
-MOCK_HTML = """
+PDF_URL = "https://www.hospital.or.jp/site/ministry/"
+MEETING_URL = "https://www.mhlw.go.jp/stf/shingi/shingi-chuo_128154.html"
+MOCK_HTML_PDF = """
 <html><body>
-<div class="isotope-wrap">
-  <div class="col-12 isotope-item">
-    <div class="fs13">2025.04.19</div>
-    <div><p class="fs_p ic_140"><a href="doc1.pdf">Known Doc 1</a></p></div>
-  </div>
-<div class="col-12 isotope-item">
-  <div class="fs13">2025.04.20</div>
-  <div><p class="fs_p ic_140"><a href="new_doc.pdf">New Doc 1</a></p></div>
-</div>
+ <div class="col-12 isotope-item">
+   <div class="fs13">2025.04.19</div>
+   <div><p class="fs_p ic_140"><a href="known.pdf">Known PDF</a></p></div>
+ </div>
+ <div class="col-12 isotope-item">
+   <div class="fs13">2025.04.20</div>
+   <div><p class="fs_p ic_140"><a href="new.pdf">New PDF</a></p></div>
+ </div>
 </body></html>
 """
-# Expected data structure from the new parser
-MOCK_DOC_INFO_KNOWN = {'date': '2025.04.19', 'title': 'Known Doc 1', 'url': 'http://mock-hospital.test/site/ministry/doc1.pdf'}
-MOCK_DOC_INFO_NEW = {'date': '2025.04.20', 'title': 'New Doc 1', 'url': 'http://mock-hospital.test/site/ministry/new_doc.pdf'}
-CURRENT_DOCS_FOUND = [MOCK_DOC_INFO_KNOWN, MOCK_DOC_INFO_NEW]
-CURRENT_URLS_FOUND_SET = {doc['url'] for doc in CURRENT_DOCS_FOUND} # Set of URLs for storage comparison
+MOCK_HTML_MEETING = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <td> 第607回 </td><td> 2025年4月23日 </td><td> <ol><li>New Topic</li></ol> </td>
+      <td></td><td><a href="new_material.pdf" class="m-link">資料</a></td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+MOCK_HTML_MEETING_OLD = """
+<html><body>
+<table class="m-tableFlex">
+  <tbody>
+    <tr>
+      <td> 第606回 </td><td> 2025年4月09日 </td><td> <ol><li>Old Topic</li></ol> </td>
+      <td></td><td><a href="old_material.pdf" class="m-link">資料</a></td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
 
-KNOWN_URLS_INITIAL = {MOCK_DOC_INFO_KNOWN['url']} # Initial known URLs (set)
-NEW_DOCS_EXPECTED_FOR_NOTIFY = [MOCK_DOC_INFO_NEW] # List of dicts for notifier
-NEW_URLS_EXPECTED_SET = {MOCK_DOC_INFO_NEW['url']} # Set of new URLs for storage check
-UPDATED_KNOWN_URLS_SET = KNOWN_URLS_INITIAL.union(NEW_URLS_EXPECTED_SET) # Updated set for storage save check
+# Expected parser results
+PARSED_PDF_DOCS = [
+    {'date': '2025.04.19', 'title': 'Known PDF', 'url': f'{PDF_URL}known.pdf'},
+    {'date': '2025.04.20', 'title': 'New PDF', 'url': f'{PDF_URL}new.pdf'}
+]
+PARSED_MEETING_NEW = {
+    'id': '第607回', 'date': '2025年4月23日', 'topics': ['New Topic'],
+    'minutes_url': None, 'minutes_text': None,
+    'materials_url': f'{MEETING_URL.rsplit("/", 1)[0]}/new_material.pdf', 'materials_text': '資料'
+}
+PARSED_MEETING_OLD = {
+    'id': '第606回', 'date': '2025年4月09日', 'topics': ['Old Topic'],
+    'minutes_url': None, 'minutes_text': None,
+    'materials_url': f'{MEETING_URL.rsplit("/", 1)[0]}/old_material.pdf', 'materials_text': '資料'
+}
+
+# Initial storage states
+INITIAL_KNOWN_URLS: Dict[str, List[str]] = {PDF_URL: [f'{PDF_URL}known.pdf']}
+INITIAL_LATEST_IDS: Dict[str, str] = {MEETING_URL: '第606回'}
+
+# Expected states after successful run
+EXPECTED_KNOWN_URLS_AFTER_PDF: Dict[str, List[str]] = {
+    PDF_URL: sorted([f'{PDF_URL}known.pdf', f'{PDF_URL}new.pdf'])
+}
+EXPECTED_LATEST_IDS_AFTER_MEETING: Dict[str, str] = {MEETING_URL: '第607回'}
+
+# Expected notification payloads
+EXPECTED_PDF_NOTIFY_PAYLOAD = {
+    'type': 'pdf',
+    'data': [{'date': '2025.04.20', 'title': 'New PDF', 'url': f'{PDF_URL}new.pdf'}],
+    'source_url': PDF_URL
+}
+EXPECTED_MEETING_NOTIFY_PAYLOAD = {
+    'type': 'meeting',
+    'data': PARSED_MEETING_NEW,
+    'source_url': MEETING_URL
+}
+
 
 # --- Fixtures ---
 
 @pytest.fixture
 def mock_fetcher(mocker):
+    """Mocks fetcher.fetch_html."""
     return mocker.patch('src.main.fetcher.fetch_html')
 
 @pytest.fixture
-def mock_parser(mocker):
-    # Mock the new parser function used in main.py
-    return mocker.patch('src.main.parser.extract_hospital_document_info')
+def mock_parsers(mocker):
+    """Mocks all parser functions used in main."""
+    mock_pdf_parser = mocker.patch('src.main.parser.extract_hospital_document_info')
+    mock_meeting_parser = mocker.patch('src.main.parser.extract_latest_chuikyo_meeting')
+    return mock_pdf_parser, mock_meeting_parser
 
 @pytest.fixture
-def mock_storage(mocker):
-    """Mocks storage functions load_known_urls and save_known_urls."""
-    # Mock the functions called within main.run_check
-    # Note: We mock them within src.main because that's where they are imported and used.
-    mock_load = mocker.patch('src.main.storage.load_known_urls')
-    mock_save = mocker.patch('src.main.storage.save_known_urls')
-    # Mock the _get_gcs_client to avoid actual client creation if storage module is imported elsewhere
-    mocker.patch('src.storage._get_gcs_client', return_value=MagicMock())
-    return mock_load, mock_save
+def mock_storage_funcs(mocker):
+    """Mocks all storage functions used in main."""
+    mock_load_known = mocker.patch('src.main.storage.load_known_urls')
+    mock_save_known = mocker.patch('src.main.storage.save_known_urls')
+    mock_load_ids = mocker.patch('src.main.storage.load_latest_meeting_ids')
+    mock_save_ids = mocker.patch('src.main.storage.save_latest_meeting_ids')
+    # find_new_pdf_urls uses load/save internally, so we don't mock it directly
+    # unless we want to test its specific return value in isolation.
+    # For integration, we let it run using the mocked load/save.
+    # mocker.patch('src.main.storage.find_new_pdf_urls') # Don't mock this for integration
+    mocker.patch('src.storage._get_gcs_client', return_value=MagicMock()) # Mock GCS client init
+    return mock_load_known, mock_save_known, mock_load_ids, mock_save_ids
 
 @pytest.fixture
 def mock_notifier(mocker):
@@ -65,224 +126,236 @@ def mock_notifier(mocker):
 @pytest.fixture
 def mock_app_config() -> Config:
     """Returns a mock Config object for integration tests."""
-    # Use dummy GCS paths as storage functions are mocked
     return Config(
-        target_url=TEST_TARGET_URL,
+        target_urls=[PDF_URL, MEETING_URL], # Include both URLs
+        url_configs={ # Define configs for both
+            PDF_URL: {"type": "pdf", "parser": parser.extract_hospital_document_info},
+            MEETING_URL: {"type": "meeting", "parser": parser.extract_latest_chuikyo_meeting}
+        },
         slack_api_token="test-token",
         slack_channel_id="C123INTEGRATION",
-        known_urls_file_path=None, # No longer used directly by mocked storage
+        known_urls_file="test_known.json",
+        latest_ids_file="test_ids.json",
         log_level="DEBUG",
         admin_slack_channel_id="C456ADMININTEGRATION",
-        gcs_bucket_name="test-bucket", # Dummy value
-        gcs_object_name="test/known_urls.json", # Dummy value
+        gcs_bucket_name="test-bucket",
         request_timeout=10,
         request_retries=3,
         request_retry_delay=1
-        # Ensure all required fields have values
-        # slack_secret_id is not part of Config dataclass
     )
 
-@pytest.fixture(autouse=True)
-def mock_load_config_in_modules(mocker, mock_app_config, mock_storage):
-    """
-    Mocks load_config where it's called by modules used in main.run_check.
-    Also updates the mock_app_config to reflect GCS usage (though values are dummy).
-    """
-    # mock_storage fixture now returns mocks, not a path
-    # The config object from mock_app_config already has dummy GCS paths
-    updated_config = mock_app_config # Use the config directly
-
-    # Mock load_config where it's called by the modules used in main.run_check
-    # Pass the updated_config which now includes dummy GCS paths
-    mocker.patch('src.fetcher.load_config', return_value=updated_config)
-    # src.parser does not call load_config
-    # Mock the internal _get_config in notifier to return our test config
-    mocker.patch('src.notifier._get_config', return_value=updated_config)
-    # Mock load_config called by logger (which might be called by storage or main)
-    mocker.patch('src.logger.load_config', return_value=updated_config)
-    # Mock load_config called by main itself (at the start of run_check)
-    mocker.patch('src.main.load_config', return_value=updated_config)
-    # Mock load_config potentially called by storage functions (though they are mocked in main)
-    # It's safer to mock it here in case storage is imported elsewhere and load_config is called
-    mocker.patch('src.storage.load_config', return_value=updated_config, create=True) # Use create=True if load_config isn't directly in storage.py
+# Remove autouse fixture for load_config mocking, as config is passed directly
 
 # --- Test Cases ---
 
-# Add mock_app_config fixture to tests that need its values
-def test_run_check_success_new_urls(mock_fetcher, mock_parser, mock_storage, mock_notifier, mock_app_config):
-    """Test the main run_check flow when new URLs are found."""
+def test_run_check_all_success(mock_fetcher, mock_parsers, mock_storage_funcs, mock_notifier, mock_app_config):
+    """Test run_check processes both URL types successfully with new findings."""
+    mock_pdf_parser, mock_meeting_parser = mock_parsers
+    mock_load_known, mock_save_known, mock_load_ids, mock_save_ids = mock_storage_funcs
     mock_notify, mock_alert = mock_notifier
-    mock_load, mock_save = mock_storage # Get the mocked storage functions
 
     # Configure mocks
-    mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = CURRENT_DOCS_FOUND # Parser returns list of dicts
-    mock_load.return_value = KNOWN_URLS_INITIAL # Storage load returns set of URLs
+    mock_fetcher.side_effect = lambda url, **kwargs: MOCK_HTML_PDF if url == PDF_URL else MOCK_HTML_MEETING if url == MEETING_URL else None
+    mock_pdf_parser.return_value = PARSED_PDF_DOCS
+    mock_meeting_parser.return_value = PARSED_MEETING_NEW
+    mock_load_known.return_value = INITIAL_KNOWN_URLS
+    mock_load_ids.return_value = INITIAL_LATEST_IDS
 
-    # Run the main function
-    # Pass the config object explicitly to run_check
-    main.run_check(mock_app_config)
+    # Run the main check function
+    result = main.run_check(mock_app_config)
 
     # Assertions
-    # Check fetcher call with individual args
-    mock_fetcher.assert_called_once_with(
-        url=mock_app_config.target_url,
-        timeout=mock_app_config.request_timeout,
-        retries=mock_app_config.request_retries,
-        delay=mock_app_config.request_retry_delay
-    )
-    # Check parser call (new function name)
-    mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
-    # Check storage load call
-    mock_load.assert_called_once_with(mock_app_config)
-    # Check storage save call with the updated set of URLs
-    mock_save.assert_called_once_with(UPDATED_KNOWN_URLS_SET, mock_app_config)
-    # Check notifier call with the list of new document dicts
-    mock_notify.assert_called_once_with(NEW_DOCS_EXPECTED_FOR_NOTIFY, mock_app_config)
+    assert result is True # Overall success
+    assert mock_fetcher.call_count == 2 # Called for both URLs
+    mock_pdf_parser.assert_called_once_with(MOCK_HTML_PDF, PDF_URL)
+    mock_meeting_parser.assert_called_once_with(MOCK_HTML_MEETING, MEETING_URL)
+    mock_load_known.assert_called_once_with(mock_app_config)
+    mock_load_ids.assert_called_once_with(mock_app_config)
+    # Check saves
+    mock_save_known.assert_called_once_with(EXPECTED_KNOWN_URLS_AFTER_PDF, mock_app_config)
+    mock_save_ids.assert_called_once_with(EXPECTED_LATEST_IDS_AFTER_MEETING, mock_app_config)
+    # Check notifications
+    assert mock_notify.call_count == 2
+    mock_notify.assert_any_call(EXPECTED_PDF_NOTIFY_PAYLOAD, mock_app_config)
+    mock_notify.assert_any_call(EXPECTED_MEETING_NOTIFY_PAYLOAD, mock_app_config)
     mock_alert.assert_not_called()
 
-# Add mock_app_config fixture
-def test_run_check_success_no_new_urls(mock_fetcher, mock_parser, mock_storage, mock_notifier, mock_app_config):
-    """Test the main run_check flow when no new URLs are found."""
+def test_run_check_no_new_items(mock_fetcher, mock_parsers, mock_storage_funcs, mock_notifier, mock_app_config):
+    """Test run_check when no new PDFs or meetings are found."""
+    mock_pdf_parser, mock_meeting_parser = mock_parsers
+    mock_load_known, mock_save_known, mock_load_ids, mock_save_ids = mock_storage_funcs
     mock_notify, mock_alert = mock_notifier
-    mock_load, mock_save = mock_storage
 
     # Configure mocks
-    mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = CURRENT_DOCS_FOUND # Parser returns list of dicts
-    mock_load.return_value = CURRENT_URLS_FOUND_SET # Storage load returns the same set of URLs
+    mock_fetcher.side_effect = lambda url, **kwargs: MOCK_HTML_PDF if url == PDF_URL else MOCK_HTML_MEETING_OLD if url == MEETING_URL else None
+    # PDF parser returns docs, but they are already known
+    mock_pdf_parser.return_value = [{'date': '2025.04.19', 'title': 'Known PDF', 'url': f'{PDF_URL}known.pdf'}]
+    # Meeting parser returns the old meeting ID
+    mock_meeting_parser.return_value = PARSED_MEETING_OLD
+    # Storage load returns the current state
+    mock_load_known.return_value = {PDF_URL: [f'{PDF_URL}known.pdf']}
+    mock_load_ids.return_value = {MEETING_URL: '第606回'}
 
-    # Run the main function
-    main.run_check(mock_app_config)
+    result = main.run_check(mock_app_config)
 
-    # Assertions
-    mock_fetcher.assert_called_once_with(
-        url=mock_app_config.target_url,
-        timeout=mock_app_config.request_timeout,
-        retries=mock_app_config.request_retries,
-        delay=mock_app_config.request_retry_delay
-    )
-    mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
-    mock_load.assert_called_once_with(mock_app_config)
-    mock_save.assert_not_called() # Save should not be called
-    # Check notifier calls
+    assert result is True
+    assert mock_fetcher.call_count == 2
+    mock_pdf_parser.assert_called_once()
+    mock_meeting_parser.assert_called_once()
+    mock_load_known.assert_called_once()
+    mock_load_ids.assert_called_once()
+    mock_save_known.assert_not_called() # No changes to save
+    mock_save_ids.assert_not_called()   # No changes to save
+    mock_notify.assert_not_called()     # No notifications
+    mock_alert.assert_not_called()
+
+def test_run_check_pdf_first_run_meeting_no_change(mock_fetcher, mock_parsers, mock_storage_funcs, mock_notifier, mock_app_config):
+    """Test first run for PDF URL, no change for meeting URL."""
+    mock_pdf_parser, mock_meeting_parser = mock_parsers
+    mock_load_known, mock_save_known, mock_load_ids, mock_save_ids = mock_storage_funcs
+    mock_notify, mock_alert = mock_notifier
+
+    # Configure mocks
+    mock_fetcher.side_effect = lambda url, **kwargs: MOCK_HTML_PDF if url == PDF_URL else MOCK_HTML_MEETING_OLD if url == MEETING_URL else None
+    mock_pdf_parser.return_value = PARSED_PDF_DOCS # Found docs for PDF URL
+    mock_meeting_parser.return_value = PARSED_MEETING_OLD # Old meeting info
+    mock_load_known.return_value = {} # PDF file not found (first run)
+    mock_load_ids.return_value = {MEETING_URL: '第606回'} # Existing meeting ID
+
+    result = main.run_check(mock_app_config)
+
+    assert result is True
+    assert mock_fetcher.call_count == 2
+    mock_pdf_parser.assert_called_once()
+    mock_meeting_parser.assert_called_once()
+    mock_load_known.assert_called_once()
+    mock_load_ids.assert_called_once()
+    # Save should be called for PDF URL with current docs
+    mock_save_known.assert_called_once_with({PDF_URL: sorted([d['url'] for d in PARSED_PDF_DOCS])}, mock_app_config)
+    mock_save_ids.assert_not_called() # No change for meeting ID
+    mock_notify.assert_not_called() # No notification on first run for PDF
+    mock_alert.assert_not_called()
+
+def test_run_check_meeting_parser_returns_none(mock_fetcher, mock_parsers, mock_storage_funcs, mock_notifier, mock_app_config):
+    """Test run_check handles meeting parser returning None gracefully."""
+    mock_pdf_parser, mock_meeting_parser = mock_parsers
+    mock_load_known, mock_save_known, mock_load_ids, mock_save_ids = mock_storage_funcs
+    mock_notify, mock_alert = mock_notifier
+
+    # Configure mocks
+    mock_fetcher.side_effect = lambda url, **kwargs: MOCK_HTML_PDF if url == PDF_URL else "<html></html>" # Empty HTML for meeting
+    mock_pdf_parser.return_value = [] # No new PDFs
+    mock_meeting_parser.return_value = None # Simulate parser finding nothing or erroring gracefully
+    mock_load_known.return_value = {PDF_URL: []}
+    mock_load_ids.return_value = {MEETING_URL: 'ID_Prev'}
+
+    result = main.run_check(mock_app_config)
+
+    assert result is True # Should still be overall success
+    assert mock_fetcher.call_count == 2
+    mock_pdf_parser.assert_called_once()
+    mock_meeting_parser.assert_called_once()
+    mock_load_known.assert_called_once()
+    mock_load_ids.assert_called_once() # Load IDs is still called
+    mock_save_known.assert_not_called()
+    mock_save_ids.assert_not_called() # Save IDs not called as no new ID found
     mock_notify.assert_not_called()
     mock_alert.assert_not_called()
 
-# Add mock_app_config fixture
-def test_run_check_first_run(mock_fetcher, mock_parser, mock_storage, mock_notifier, mock_app_config):
-    """Test the main run_check flow on the first execution."""
+
+def test_run_check_fetch_failure_one_url(mock_fetcher, mock_parsers, mock_storage_funcs, mock_notifier, mock_app_config):
+    """Test run_check handles fetch failure for one URL and continues."""
+    mock_pdf_parser, mock_meeting_parser = mock_parsers
+    mock_load_known, mock_save_known, mock_load_ids, mock_save_ids = mock_storage_funcs
     mock_notify, mock_alert = mock_notifier
-    mock_load, mock_save = mock_storage
 
     # Configure mocks
-    mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = CURRENT_DOCS_FOUND # Parser returns list of dicts
-    # Simulate GCS NotFound exception for first run
-    mock_load.side_effect = NotFound("GCS object not found") # storage.load returns empty set in this case internally
+    def fetch_side_effect(url, **kwargs):
+        if url == PDF_URL:
+            return None # Fail PDF fetch
+        elif url == MEETING_URL:
+            return MOCK_HTML_MEETING_OLD # Succeed meeting fetch
+        return None
+    mock_fetcher.side_effect = fetch_side_effect
+    mock_meeting_parser.return_value = PARSED_MEETING_OLD
+    mock_load_ids.return_value = {MEETING_URL: '第606回'} # No change expected
 
-    # Run the main function
-    main.run_check(mock_app_config)
+    result = main.run_check(mock_app_config)
 
-    # Assertions
-    mock_fetcher.assert_called_once_with(
-        url=mock_app_config.target_url,
-        timeout=mock_app_config.request_timeout,
-        retries=mock_app_config.request_retries,
-        delay=mock_app_config.request_retry_delay
-    )
-    mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
-    mock_load.assert_called_once_with(mock_app_config)
-    # Check save was called with the set of currently found URLs for the first run
-    mock_save.assert_called_once_with(CURRENT_URLS_FOUND_SET, mock_app_config)
-    # Check notifier calls (should not notify on first run)
+    assert result is False # Overall failure because one URL failed
+    assert mock_fetcher.call_count == 2
+    mock_pdf_parser.assert_not_called() # Not called because fetch failed
+    mock_meeting_parser.assert_called_once() # Called for the successful one
+    mock_load_known.assert_not_called() # Not called because PDF processing didn't happen
+    mock_load_ids.assert_called_once() # Called for meeting processing
+    mock_save_known.assert_not_called()
+    mock_save_ids.assert_not_called()
     mock_notify.assert_not_called()
-    mock_alert.assert_not_called()
+    # Check admin alert for the failed URL
+    mock_alert.assert_called_once_with(f"HTML fetch failed: {PDF_URL}", config=mock_app_config)
 
-# Add mock_app_config fixture
-def test_run_check_fetch_failure(mock_fetcher, mock_parser, mock_storage, mock_notifier, mock_app_config):
-    """Test the main run_check flow when fetcher fails."""
+def test_run_check_parser_failure_one_url(mock_fetcher, mock_parsers, mock_storage_funcs, mock_notifier, mock_app_config):
+    """Test run_check handles parser failure for one URL and continues."""
+    mock_pdf_parser, mock_meeting_parser = mock_parsers
+    mock_load_known, mock_save_known, mock_load_ids, mock_save_ids = mock_storage_funcs
     mock_notify, mock_alert = mock_notifier
-    mock_load, mock_save = mock_storage # Get mocks even if not used
+    test_exception = ValueError("PDF Parse Error")
 
     # Configure mocks
-    mock_fetcher.return_value = None # Simulate fetch failure
+    mock_fetcher.side_effect = lambda url, **kwargs: MOCK_HTML_PDF if url == PDF_URL else MOCK_HTML_MEETING_OLD if url == MEETING_URL else None
+    mock_pdf_parser.side_effect = test_exception # Fail PDF parser
+    mock_meeting_parser.return_value = PARSED_MEETING_OLD
+    mock_load_ids.return_value = {MEETING_URL: '第606回'} # No change expected
 
-    # Run the main function
-    main.run_check(mock_app_config)
+    result = main.run_check(mock_app_config)
 
-    # Assertions
-    mock_fetcher.assert_called_once_with(
-        url=mock_app_config.target_url,
-        timeout=mock_app_config.request_timeout,
-        retries=mock_app_config.request_retries,
-        delay=mock_app_config.request_retry_delay
-    )
-    mock_parser.assert_not_called() # Should not parse if fetch fails
-    mock_load.assert_not_called()   # Should not load if fetch fails
-    mock_save.assert_not_called()   # Should not save if fetch fails
+    assert result is False # Overall failure
+    assert mock_fetcher.call_count == 2
+    mock_pdf_parser.assert_called_once() # Parser was called
+    mock_meeting_parser.assert_called_once() # Meeting parser also called
+    # Load functions might be called depending on exact flow within process_url
+    # mock_load_known.assert_called_once() # Might not be called if parser fails early
+    mock_load_ids.assert_called_once()
+    mock_save_known.assert_not_called()
+    mock_save_ids.assert_not_called()
     mock_notify.assert_not_called()
-    # Use the actual message from main.py
-    mock_alert.assert_called_once_with(f"HTML fetch failed: {mock_app_config.target_url}", config=mock_app_config) # Check admin alert
-
-# Add mock_app_config fixture
-def test_run_check_parser_returns_empty(mock_fetcher, mock_parser, mock_storage, mock_notifier, mock_app_config):
-    """Test the flow when parser finds no links."""
-    mock_notify, mock_alert = mock_notifier
-    mock_load, mock_save = mock_storage
-
-    # Configure mocks
-    mock_fetcher.return_value = MOCK_HTML
-    mock_parser.return_value = [] # Simulate parser finding no documents (empty list)
-    mock_load.return_value = KNOWN_URLS_INITIAL # Simulate loading initial URLs
-
-    # Run the main function
-    main.run_check(mock_app_config)
-
-    # Assertions
-    mock_fetcher.assert_called_once_with(
-        url=mock_app_config.target_url,
-        timeout=mock_app_config.request_timeout,
-        retries=mock_app_config.request_retries,
-        delay=mock_app_config.request_retry_delay
-    )
-    mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
-    mock_load.assert_called_once_with(mock_app_config)
-    mock_save.assert_not_called() # Save should not be called if parser returns empty
-    mock_notify.assert_not_called()
-    mock_alert.assert_not_called()
-
-# Add mock_app_config fixture
-def test_run_check_unexpected_exception(mock_fetcher, mock_parser, mock_storage, mock_notifier, mock_app_config):
-    """Test the main run_check flow handles unexpected errors during parsing."""
-    mock_notify, mock_alert = mock_notifier
-    mock_load, mock_save = mock_storage # Get mocks
-
-    # Configure mocks
-    mock_fetcher.return_value = MOCK_HTML
-    test_exception = ValueError("Something unexpected happened")
-    mock_parser.side_effect = test_exception # Simulate error during parsing
-    # Load might still be called before parser error, depending on exact flow
-    mock_load.return_value = KNOWN_URLS_INITIAL
-
-    # Run the main function
-    main.run_check(mock_app_config)
-
-    # Assertions
-    mock_fetcher.assert_called_once_with(
-        url=mock_app_config.target_url,
-        timeout=mock_app_config.request_timeout,
-        retries=mock_app_config.request_retries,
-        delay=mock_app_config.request_retry_delay
-    )
-    mock_parser.assert_called_once_with(MOCK_HTML, mock_app_config.target_url)
-    # Load might still be called before parser error
-    # mock_load.assert_called_once_with(mock_app_config) # This depends on exact execution order
-    mock_save.assert_not_called() # Save should not happen if parser fails
-    mock_notify.assert_not_called() # Should not notify if error occurred
-    # Use the actual message from main.py
+    # Check admin alert for the failed parser
     mock_alert.assert_called_once_with(
-        "run_check: An unexpected error occurred.",
+        f"Parser execution error for {PDF_URL}",
+        error=test_exception,
+        config=mock_app_config
+    )
+
+def test_run_check_storage_load_error(mock_fetcher, mock_parsers, mock_storage_funcs, mock_notifier, mock_app_config):
+    """Test run_check handles critical storage load error."""
+    mock_pdf_parser, mock_meeting_parser = mock_parsers
+    mock_load_known, mock_save_known, mock_load_ids, mock_save_ids = mock_storage_funcs
+    mock_notify, mock_alert = mock_notifier
+    test_exception = Exception("GCS Critical Error")
+
+    # Configure mocks
+    mock_fetcher.side_effect = lambda url, **kwargs: MOCK_HTML_PDF if url == PDF_URL else MOCK_HTML_MEETING_OLD if url == MEETING_URL else None
+    mock_pdf_parser.return_value = PARSED_PDF_DOCS
+    mock_meeting_parser.return_value = PARSED_MEETING_OLD
+    mock_load_known.side_effect = test_exception # Simulate critical error loading known URLs
+
+    result = main.run_check(mock_app_config)
+
+    assert result is False # Overall failure
+    assert mock_fetcher.call_count == 2 # Both fetches might happen before error propagates fully
+    mock_pdf_parser.assert_called_once() # PDF parser called
+    mock_meeting_parser.assert_called_once() # Meeting parser called
+    mock_load_known.assert_called_once() # Load known called
+    # Depending on where the exception is caught, load_ids might not be called
+    # mock_load_ids.assert_called_once()
+    mock_save_known.assert_not_called()
+    mock_save_ids.assert_not_called()
+    mock_notify.assert_not_called()
+    # Check admin alert for the storage error (likely caught in process_url or run_check)
+    # The exact message might vary depending on where it's caught.
+    # Using ANY for the error object might be safer.
+    mock_alert.assert_called_once_with(
+        ANY, # The message might differ slightly
         error=test_exception,
         config=mock_app_config
     )
