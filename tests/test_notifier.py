@@ -200,13 +200,22 @@ def test_send_slack_notification_unknown_type(mock_slack_client, mock_app_config
 
 def test_send_slack_notification_no_channel_id(mock_slack_client, mock_app_config):
     """Test no notification is sent if SLACK_CHANNEL_ID is None in config."""
-    mock_app_config.slack_channel_id = None # Modify config for this test
+    # Create a new config instance with slack_channel_id=None
+    config_no_channel = Config(
+        target_urls=mock_app_config.target_urls,
+        url_configs=mock_app_config.url_configs,
+        slack_api_token=mock_app_config.slack_api_token,
+        slack_channel_id=None, # Set to None for this test
+        known_urls_file=mock_app_config.known_urls_file,
+        latest_ids_file=mock_app_config.latest_ids_file,
+        log_level=mock_app_config.log_level,
+        admin_slack_channel_id=mock_app_config.admin_slack_channel_id,
+        gcs_bucket_name=mock_app_config.gcs_bucket_name
+    )
     payload = {'type': 'pdf', 'data': [{'date': 'd', 'title': 't', 'url': 'u'}], 'source_url': PDF_SOURCE_URL}
 
-    notifier.send_slack_notification(payload, mock_app_config)
+    notifier.send_slack_notification(payload, config_no_channel) # Pass the modified config
     mock_slack_client.chat_postMessage.assert_not_called()
-    # Restore config if needed
-    mock_app_config.slack_channel_id = TEST_CHANNEL_ID
 
 def test_send_slack_notification_client_init_fails(mocker, mock_app_config):
     """Test no notification if slack client initialization fails."""
@@ -247,10 +256,20 @@ def test_send_admin_alert_success_with_error(mock_slack_client, mock_app_config)
 
 def test_send_admin_alert_no_admin_channel_id(mock_slack_client, mock_app_config):
     """Test no admin alert if admin_slack_channel_id is None."""
-    mock_app_config.admin_slack_channel_id = None # Modify config
-    notifier.send_admin_alert("Test message", config=mock_app_config)
+    # Create a new config instance with admin_slack_channel_id=None
+    config_no_admin = Config(
+        target_urls=mock_app_config.target_urls,
+        url_configs=mock_app_config.url_configs,
+        slack_api_token=mock_app_config.slack_api_token,
+        slack_channel_id=mock_app_config.slack_channel_id,
+        known_urls_file=mock_app_config.known_urls_file,
+        latest_ids_file=mock_app_config.latest_ids_file,
+        log_level=mock_app_config.log_level,
+        admin_slack_channel_id=None, # Set to None for this test
+        gcs_bucket_name=mock_app_config.gcs_bucket_name
+    )
+    notifier.send_admin_alert("Test message", config=config_no_admin) # Pass the modified config
     mock_slack_client.chat_postMessage.assert_not_called()
-    mock_app_config.admin_slack_channel_id = TEST_ADMIN_CHANNEL_ID # Restore
 
 def test_send_admin_alert_client_init_fails(mocker, mock_app_config):
     """Test no admin alert if slack client initialization fails."""

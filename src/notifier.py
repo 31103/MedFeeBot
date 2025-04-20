@@ -1,7 +1,11 @@
+import logging # Import logging
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from .config import load_config, Config # Import load_config
-from .logger import logger
+# from .logger import logger # REMOVE direct logger import
+
+# Get logger instance for this module
+logger = logging.getLogger(__name__)
 
 # Global variable to hold the client instance (lazy initialized)
 _slack_client: WebClient | None = None

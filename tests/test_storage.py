@@ -153,14 +153,22 @@ def test_load_known_urls_gcs_download_error(mock_gcs_client, test_config):
         storage.load_known_urls(test_config)
     mock_blob.download_as_string.assert_called_once()
 
-def test_load_known_urls_missing_config(test_config):
+def test_load_known_urls_missing_config(mock_app_config): # Use the correct fixture name
     """Test load_known_urls returns empty dict if config is missing GCS bucket."""
-    # Modify config for this test
-    test_config.gcs_bucket_name = None
-    known_urls_dict = storage.load_known_urls(test_config)
+    # Create a new config instance with gcs_bucket_name=None
+    config_no_gcs = Config(
+        target_urls=mock_app_config.target_urls,
+        url_configs=mock_app_config.url_configs,
+        slack_api_token=mock_app_config.slack_api_token,
+        slack_channel_id=mock_app_config.slack_channel_id,
+        known_urls_file=mock_app_config.known_urls_file,
+        latest_ids_file=mock_app_config.latest_ids_file,
+        log_level=mock_app_config.log_level,
+        admin_slack_channel_id=mock_app_config.admin_slack_channel_id,
+        gcs_bucket_name=None # Set to None for this test
+    )
+    known_urls_dict = storage.load_known_urls(config_no_gcs) # Pass the modified config
     assert known_urls_dict == {}
-    # Restore config if needed by other tests (or use a fixture scope)
-    test_config.gcs_bucket_name = TEST_BUCKET_NAME
 
 # --- Test Cases for save_known_urls ---
 
@@ -213,13 +221,30 @@ def test_save_known_urls_gcs_upload_error(mock_gcs_client, test_config, mocker):
     mock_blob.upload_from_string.assert_called_once()
     mock_logger_exception.assert_called_once()
 
-def test_save_known_urls_missing_config(test_config, mocker):
+def test_save_known_urls_missing_config(mock_app_config, mocker): # Use the correct fixture name
     """Test save_known_urls logs error if config is missing GCS bucket."""
     mock_logger_error = mocker.patch('src.storage.logger.error')
-    test_config.gcs_bucket_name = None
-    storage.save_known_urls({}, test_config)
-    mock_logger_error.assert_called_with("Storage path (known_urls_file) is not configured. Cannot save known URLs.")
-    test_config.gcs_bucket_name = TEST_BUCKET_NAME # Restore
+    # Create a new config instance with gcs_bucket_name=None
+    config_no_gcs = Config(
+        target_urls=mock_app_config.target_urls,
+        url_configs=mock_app_config.url_configs,
+        slack_api_token=mock_app_config.slack_api_token,
+        slack_channel_id=mock_app_config.slack_channel_id,
+        known_urls_file=None, # Set storage path to None as well
+        latest_ids_file=mock_app_config.latest_ids_file,
+        log_level=mock_app_config.log_level,
+        admin_slack_channel_id=mock_app_config.admin_slack_channel_id,
+        gcs_bucket_name=None # Set to None for this test
+    )
+    # When GCS bucket is None, and storage_path (local path) is None (default), it should log error
+    storage.save_known_urls({}, config_no_gcs) # Pass the modified config
+    # Expect the "invalid configuration" message when both GCS bucket and path are missing
+    mock_logger_error.assert_called_with("Storage configuration invalid. Cannot save known URLs. Provide GCS bucket name or ensure local path is set without GCS bucket.")
+
+# Test case where GCS is None but local path IS configured (should still log error as GCS takes precedence if bucket name was expected)
+# This behavior might need refinement based on desired logic (e.g., fallback to local if GCS fails?)
+# For now, assume if GCS bucket is configured (even if None), local path is ignored unless GCS fails non-critically.
+# Let's refine the save function logic slightly first.
 
 
 # --- Test Cases for find_new_pdf_urls ---
@@ -317,9 +342,10 @@ def test_find_new_pdf_urls_load_error(mock_save, mock_load, test_config, mocker)
     current_urls = {"http://a.pdf"}
     target_url = TARGET_URL_PDF
 
-    new_urls = storage.find_new_pdf_urls(target_url, current_urls, test_config)
+    # Expect the exception to be raised
+    with pytest.raises(Exception, match="GCS Load Failed"):
+        storage.find_new_pdf_urls(target_url, current_urls, test_config)
 
-    assert new_urls == set() # Should return empty set on load error
     mock_load.assert_called_once_with(test_config)
     mock_save.assert_not_called()
     mock_logger_error.assert_called()
@@ -429,19 +455,29 @@ def test_load_latest_meeting_ids_gcs_download_error(mock_gcs_client, test_config
     mock_logger_exception = mocker.patch('src.storage.logger.exception')
     mock_blob.download_as_string.side_effect = Exception("GCS API error")
 
-    # Should not raise, should return empty dict
-    latest_ids_dict = storage.load_latest_meeting_ids(test_config)
+    # Should raise the exception
+    with pytest.raises(Exception, match="GCS API error"):
+        storage.load_latest_meeting_ids(test_config)
 
-    assert latest_ids_dict == {}
     mock_blob.download_as_string.assert_called_once()
     mock_logger_exception.assert_called_once()
 
-def test_load_latest_meeting_ids_missing_config(test_config):
+def test_load_latest_meeting_ids_missing_config(mock_app_config): # Use the correct fixture name
     """Test load_latest_meeting_ids returns empty dict if config is missing GCS bucket."""
-    test_config.gcs_bucket_name = None
-    latest_ids_dict = storage.load_latest_meeting_ids(test_config)
+    # Create a new config instance with gcs_bucket_name=None
+    config_no_gcs = Config(
+        target_urls=mock_app_config.target_urls,
+        url_configs=mock_app_config.url_configs,
+        slack_api_token=mock_app_config.slack_api_token,
+        slack_channel_id=mock_app_config.slack_channel_id,
+        known_urls_file=mock_app_config.known_urls_file,
+        latest_ids_file=mock_app_config.latest_ids_file,
+        log_level=mock_app_config.log_level,
+        admin_slack_channel_id=mock_app_config.admin_slack_channel_id,
+        gcs_bucket_name=None # Set to None for this test
+    )
+    latest_ids_dict = storage.load_latest_meeting_ids(config_no_gcs) # Pass the modified config
     assert latest_ids_dict == {}
-    test_config.gcs_bucket_name = TEST_BUCKET_NAME # Restore
 
 
 # --- Test Cases for save_latest_meeting_ids ---
@@ -492,10 +528,21 @@ def test_save_latest_meeting_ids_gcs_upload_error(mock_gcs_client, test_config, 
     mock_blob.upload_from_string.assert_called_once()
     mock_logger_exception.assert_called_once()
 
-def test_save_latest_meeting_ids_missing_config(test_config, mocker):
+def test_save_latest_meeting_ids_missing_config(mock_app_config, mocker): # Use the correct fixture name
     """Test save_latest_meeting_ids logs error if config is missing GCS bucket."""
     mock_logger_error = mocker.patch('src.storage.logger.error')
-    test_config.gcs_bucket_name = None
-    storage.save_latest_meeting_ids({}, test_config)
-    mock_logger_error.assert_called_with("Storage path (latest_ids_file) is not configured. Cannot save latest meeting IDs.")
-    test_config.gcs_bucket_name = TEST_BUCKET_NAME # Restore
+    # Create a new config instance with gcs_bucket_name=None
+    config_no_gcs = Config(
+        target_urls=mock_app_config.target_urls,
+        url_configs=mock_app_config.url_configs,
+        slack_api_token=mock_app_config.slack_api_token,
+        slack_channel_id=mock_app_config.slack_channel_id,
+        known_urls_file=mock_app_config.known_urls_file,
+        latest_ids_file=None, # Set storage path to None as well
+        log_level=mock_app_config.log_level,
+        admin_slack_channel_id=mock_app_config.admin_slack_channel_id,
+        gcs_bucket_name=None # Set to None for this test
+    )
+    # Similar to save_known_urls, if GCS bucket is None, it should log error
+    storage.save_latest_meeting_ids({}, config_no_gcs) # Pass the modified config
+    mock_logger_error.assert_called_with("Storage configuration invalid or missing. Cannot save latest meeting IDs. Provide GCS bucket name or ensure local path is set without GCS bucket.")

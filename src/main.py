@@ -1,11 +1,16 @@
 import functions_framework
 import flask
-from .config import load_config, Config # Import load_config and Config
-from .logger import logger
+import logging # Import logging module
+from .config import load_config, Config
+from .logger import setup_logger # Import setup_logger
+# from .logger import logger # REMOVE direct logger import
 from . import fetcher
 from . import parser
 from . import storage
 from . import notifier
+
+# Get logger instance for this module
+logger = logging.getLogger(__name__)
 
 
 def process_url(url: str, cfg: Config) -> bool:
@@ -122,10 +127,13 @@ def process_url(url: str, cfg: Config) -> bool:
             logger.error(f"Unknown monitor type '{monitor_type}' for URL {url}. Skipping.")
             return False # Indicate failure
 
-    except Exception as e:
+    except Exception as e: # Catch potential errors from storage or notification
         logger.exception(f"Error during {monitor_type} processing for {url}: {e}")
+        # Send admin alert only if it's not a storage load error (which should have been raised from storage)
+        # or handle specific expected exceptions from storage/notifier if needed.
+        # For now, send alert for any exception caught here.
         notifier.send_admin_alert(f"Error during {monitor_type} processing for {url}", error=e, config=cfg)
-        return False
+        return False # Indicate failure for this URL
 
     logger.info(f"Successfully processed URL: {url}")
     return True # Indicate success for this URL
@@ -181,17 +189,22 @@ def main_gcf(request: flask.Request):
     Returns:
         A tuple containing the response text and HTTP status code.
     """
-    logger.info("Cloud Function execution started (HTTP Trigger).")
+    # Setup logger first (before any logging happens)
     try:
         # Load configuration for this function invocation
         function_config = load_config()
+        # Setup logger using the loaded config level
+        setup_logger(level_str=function_config.log_level)
+        logger.info("Cloud Function execution started (HTTP Trigger).") # Now logger is configured
     except ValueError as e:
-        logger.error(f"Configuration error in Cloud Function: {e}")
-        # Return 500 Internal Server Error if config fails
+        # Use basic logging if config fails
+        logging.basicConfig(level=logging.INFO)
+        logging.error(f"Configuration error in Cloud Function: {e}")
         return (f"Configuration error: {e}", 500)
     except Exception as e:
-        logger.exception(f"Unexpected error during config loading in Cloud Function: {e}")
-        return (f"Unexpected configuration error: {e}", 500)
+        logging.basicConfig(level=logging.INFO)
+        logging.exception(f"Unexpected error during config loading/logger setup in Cloud Function: {e}")
+        return (f"Unexpected configuration/logger error: {e}", 500)
 
     # Execute the core logic
     success = run_check(function_config)
@@ -207,18 +220,29 @@ def main_gcf(request: flask.Request):
 
 if __name__ == "__main__":
     # Entry point for running the script directly (e.g., for local testing)
-    logger.info("Script execution started directly.")
+    # Setup logger first for direct execution
     try:
         main_config = load_config()
+        # Setup logger using the loaded config level
+        setup_logger(level_str=main_config.log_level)
+        logger.info("Script execution started directly.") # Now logger is configured
+    except ValueError as e: # Catch config loading errors specifically
+        logging.basicConfig(level=logging.INFO)
+        logging.error(f"Configuration error: {e}")
+        exit(1)
+    except Exception as e: # Catch any other unexpected errors during setup
+        logging.basicConfig(level=logging.INFO)
+        logging.exception(f"An unexpected error occurred during config loading/logger setup: {e}")
+        exit(1)
+
+    # Execute the core logic
+    try:
         success = run_check(main_config)
         if success:
             logger.info("Script execution finished successfully.")
         else:
             logger.error("Script execution finished with errors.")
             exit(1) # Exit with error code if run_check failed
-    except ValueError as e: # Catch config loading errors specifically
-        logger.error(f"Configuration error: {e}")
-        exit(1)
-    except Exception as e: # Catch any other unexpected errors during setup
-        logger.exception(f"An unexpected error occurred during script execution: {e}")
-        exit(1)
+    except Exception as e: # Catch errors during run_check itself
+         logger.exception(f"An unexpected error occurred during script execution (run_check): {e}")
+         exit(1)

@@ -11,13 +11,15 @@ from src import parser # parser モジュールをインポート
 @dataclass(frozen=True) # frozen=True makes instances immutable
 class Config:
     """Application configuration."""
-    # --- Core Settings ---
-    target_urls: List[str] = field(default_factory=list) # 監視対象URLのリスト
-    url_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict) # URLごとの設定
+    # --- Core Settings (Required fields first) ---
     slack_api_token: str
     slack_channel_id: str
 
-    # --- Storage Settings ---
+    # --- Core Settings (Fields with defaults) ---
+    target_urls: List[str] = field(default_factory=list) # 監視対象URLのリスト
+    url_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict) # URLごとの設定
+
+    # --- Storage Settings (Fields with defaults) ---
     gcs_bucket_name: str | None = None # GCSバケット名 (オプション)
     known_urls_file: str = "known_urls.json" # PDF状態ファイル名 (デフォルト値)
     latest_ids_file: str = "latest_ids.json" # 会議ID状態ファイル名 (デフォルト値)

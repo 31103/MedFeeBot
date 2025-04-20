@@ -151,11 +151,15 @@ def test_load_config_no_valid_urls(mocker):
 
 def test_load_config_default_filenames(mocker):
     """Test that default filenames are used if env vars are not set."""
+    # Create a copy of MOCK_ENV_VARS and remove the keys for default filenames
+    mock_env_without_defaults = MOCK_ENV_VARS.copy()
+    mock_env_without_defaults.pop("KNOWN_URLS_FILE", None)
+    mock_env_without_defaults.pop("LATEST_IDS_FILE", None)
+
     def side_effect_defaults(key, default=None):
-        # Exclude filename env vars
-        if key == "KNOWN_URLS_FILE": return None
-        if key == "LATEST_IDS_FILE": return None
-        return MOCK_ENV_VARS.get(key, default)
+        # Return value from the modified dict, or the provided default
+        return mock_env_without_defaults.get(key, default)
+
     mocker.patch('src.config.os.getenv', side_effect=side_effect_defaults)
     mocker.patch('src.config.load_dotenv', return_value=True)
 

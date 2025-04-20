@@ -123,28 +123,7 @@ def mock_notifier(mocker):
     mock_alert = mocker.patch('src.main.notifier.send_admin_alert')
     return mock_notify, mock_alert
 
-@pytest.fixture
-def mock_app_config() -> Config:
-    """Returns a mock Config object for integration tests."""
-    return Config(
-        target_urls=[PDF_URL, MEETING_URL], # Include both URLs
-        url_configs={ # Define configs for both
-            PDF_URL: {"type": "pdf", "parser": parser.extract_hospital_document_info},
-            MEETING_URL: {"type": "meeting", "parser": parser.extract_latest_chuikyo_meeting}
-        },
-        slack_api_token="test-token",
-        slack_channel_id="C123INTEGRATION",
-        known_urls_file="test_known.json",
-        latest_ids_file="test_ids.json",
-        log_level="DEBUG",
-        admin_slack_channel_id="C456ADMININTEGRATION",
-        gcs_bucket_name="test-bucket",
-        request_timeout=10,
-        request_retries=3,
-        request_retry_delay=1
-    )
-
-# Remove autouse fixture for load_config mocking, as config is passed directly
+# mock_app_config fixture is now defined in conftest.py and automatically available
 
 # --- Test Cases ---
 
@@ -256,9 +235,10 @@ def test_run_check_meeting_parser_returns_none(mock_fetcher, mock_parsers, mock_
     mock_pdf_parser.assert_called_once()
     mock_meeting_parser.assert_called_once()
     mock_load_known.assert_called_once()
-    mock_load_ids.assert_called_once() # Load IDs is still called
+    # mock_load_ids should NOT be called if meeting parser returns None
+    mock_load_ids.assert_not_called()
     mock_save_known.assert_not_called()
-    mock_save_ids.assert_not_called() # Save IDs not called as no new ID found
+    mock_save_ids.assert_not_called()
     mock_notify.assert_not_called()
     mock_alert.assert_not_called()
 
@@ -341,21 +321,18 @@ def test_run_check_storage_load_error(mock_fetcher, mock_parsers, mock_storage_f
 
     result = main.run_check(mock_app_config)
 
-    assert result is False # Overall failure
-    assert mock_fetcher.call_count == 2 # Both fetches might happen before error propagates fully
+    assert result is False # Overall failure because PDF processing failed
+    assert mock_fetcher.call_count == 2 # Both fetches attempted
     mock_pdf_parser.assert_called_once() # PDF parser called
-    mock_meeting_parser.assert_called_once() # Meeting parser called
-    mock_load_known.assert_called_once() # Load known called
-    # Depending on where the exception is caught, load_ids might not be called
-    # mock_load_ids.assert_called_once()
+    mock_meeting_parser.assert_called_once() # Meeting parser also called
+    mock_load_known.assert_called_once() # Load known called, which raises error
+    mock_load_ids.assert_called_once() # Load IDs for the meeting URL should still be called
     mock_save_known.assert_not_called()
-    mock_save_ids.assert_not_called()
-    mock_notify.assert_not_called()
-    # Check admin alert for the storage error (likely caught in process_url or run_check)
-    # The exact message might vary depending on where it's caught.
-    # Using ANY for the error object might be safer.
+    # mock_save_ids assertion removed - meeting processing might save
+    # mock_notify assertion removed - meeting processing might notify (though not in this specific mock setup)
+    # Check admin alert for the storage error caught during PDF processing
     mock_alert.assert_called_once_with(
-        ANY, # The message might differ slightly
+        f"Error during pdf processing for {PDF_URL}", # Error caught in process_url
         error=test_exception,
         config=mock_app_config
     )

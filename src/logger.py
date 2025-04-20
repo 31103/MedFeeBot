@@ -1,44 +1,39 @@
 import logging
 import sys
-# Import the load_config function and Config class
-from .config import load_config, Config
+# Removed config import to break circular dependency
 
 DEFAULT_LOGGER_NAME = "MedFeeBotLogger"
+DEFAULT_LOG_LEVEL = "INFO"
 
-def setup_logger(name: str = DEFAULT_LOGGER_NAME, level_str: str | None = None) -> logging.Logger:
+# Global dictionary to hold configured loggers
+_loggers = {}
+
+def setup_logger(name: str = DEFAULT_LOGGER_NAME, level_str: str = DEFAULT_LOG_LEVEL) -> logging.Logger:
     """
-    Configures and returns a logger instance.
+    Configures and returns a logger instance. Avoids duplicate handlers.
+    Log level must be provided.
 
     Args:
         name (str): The name for the logger.
-        level_str (str | None): The desired logging level as a string (e.g., "DEBUG", "INFO").
-                                If None, loads config to get the default level.
+        level_str (str): The desired logging level as a string (e.g., "DEBUG", "INFO").
 
     Returns:
         logging.Logger: The configured logger instance.
     """
+    if name in _loggers:
+        # If logger already exists, just ensure level is set (might change dynamically)
+        logger = _loggers[name]
+        log_level = getattr(logging, level_str.upper(), logging.INFO)
+        if logger.level != log_level:
+             logger.setLevel(log_level)
+             logger.debug(f"Logger '{name}' level updated to {logging.getLevelName(log_level)}.")
+        return logger
+
     logger = logging.getLogger(name)
-
-    # Determine the log level
-    final_level_str: str
-    if level_str is None:
-        # Load config only if level is not explicitly provided
-        try:
-            cfg = load_config()
-            final_level_str = cfg.log_level
-        except ValueError as e:
-            # Handle case where config loading fails during logger setup
-            logging.basicConfig(level=logging.INFO) # Basic fallback
-            logger = logging.getLogger(name) # Get logger again after basicConfig
-            logger.error(f"Failed to load config for logger level: {e}. Defaulting to INFO.")
-            final_level_str = "INFO"
-    else:
-        final_level_str = str(level_str).upper()
-
-    log_level = getattr(logging, final_level_str, logging.INFO) # Default to INFO if invalid
+    log_level = getattr(logging, level_str.upper(), logging.INFO) # Default to INFO if invalid
     logger.setLevel(log_level)
 
-    # Prevent adding duplicate handlers if logger already configured
+    # Prevent adding duplicate handlers if logger already configured externally
     if not logger.handlers:
         # Configure formatter
         log_format = logging.Formatter(
@@ -51,30 +46,47 @@ def setup_logger(name: str = DEFAULT_LOGGER_NAME, level_str: str | None = None) 
         stdout_handler.setFormatter(log_format)
         logger.addHandler(stdout_handler)
 
-        # Optionally add file handler here if needed later
-        # file_handler = logging.FileHandler('app.log')
-        # file_handler.setFormatter(log_format)
-        # logger.addHandler(file_handler)
+        logger.info(f"Logger '{name}' configured with level {logging.getLevelName(log_level)}.") # Use info level for setup message
 
-        logger.debug(f"Logger '{name}' configured with level {logging.getLevelName(log_level)}.")
-
+    _loggers[name] = logger # Store the configured logger
     return logger
 
-# Create a default logger instance for convenience in other modules
-# This will now load the config if needed (specifically for the log level)
-logger = setup_logger()
+# Remove the default logger instance creation here.
+# Modules should call setup_logger() with the desired level from config.
+# logger = setup_logger() # REMOVED
 
 # --- Example: Log output test ---
 if __name__ == "__main__":
-    # Use the default logger
-    logger.debug("This is a debug message.")
-    logger.info("This is an info message.")
-    logger.warning("This is a warning message.")
-    logger.error("This is an error message.")
-    logger.critical("This is a critical error message.")
-    print(f"Default logger '{logger.name}' is set to level '{logging.getLevelName(logger.level)}'.")
+    # Example of how other modules would use it:
+    # 1. Load config (in the main execution context)
+    # from config import load_config # Assume this works now
+    # try:
+    #     cfg = load_config()
+    #     log_level = cfg.log_level
+    # except Exception as e:
+    #     print(f"Error loading config: {e}")
+    #     log_level = DEFAULT_LOG_LEVEL
 
-    # Create another logger with a different level
-    test_logger = setup_logger("TestLogger", "DEBUG")
-    test_logger.debug("This is a debug message from TestLogger.")
+    # 2. Setup logger with the level from config
+    # logger = setup_logger(level_str=log_level)
+
+    # For direct execution test, setup manually:
+    logger_main = setup_logger(DEFAULT_LOGGER_NAME, "DEBUG") # Set level explicitly for test
+
+    logger_main.debug("This is a debug message.")
+    logger_main.info("This is an info message.")
+    logger_main.warning("This is a warning message.")
+    logger_main.error("This is an error message.")
+    logger_main.critical("This is a critical error message.")
+    print(f"Default logger '{logger_main.name}' is set to level '{logging.getLevelName(logger_main.level)}'.")
+
+    # Create another logger
+    test_logger = setup_logger("TestLogger", "INFO")
+    test_logger.debug("This debug message from TestLogger should NOT appear.")
+    test_logger.info("This info message from TestLogger SHOULD appear.")
     print(f"Test logger '{test_logger.name}' is set to level '{logging.getLevelName(test_logger.level)}'.")
+
+    # Get the default logger again, should return the same instance
+    logger_main_again = setup_logger(DEFAULT_LOGGER_NAME)
+    print(f"Got logger '{logger_main_again.name}' again, level is '{logging.getLevelName(logger_main_again.level)}'.")
+    assert logger_main is logger_main_again

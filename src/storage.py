@@ -1,10 +1,14 @@
 import json
 import os
 from typing import Set, Dict, List, Optional # Dict, List, Optional を追加
+import logging # Import logging
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
-from .logger import logger
+# from .logger import logger # REMOVE direct logger import
 from .config import Config # Import Config class
+
+# Get logger instance for this module
+logger = logging.getLogger(__name__)
 
 # GCS Client (initialized once per function invocation if needed)
 storage_client = None
@@ -74,10 +78,9 @@ def load_known_urls(config: Config) -> Dict[str, List[str]]:
             # Treat JSON decode error as non-fatal, return empty dict
         except Exception as e:
             logger.exception(f"Unexpected error loading known PDF URLs from GCS: {e}")
-            # Treat other GCS errors as fatal for loading
-            raise # Re-raise the original exception
-    # Local file handling needs adjustment if config structure changes
-    # Assuming config.known_urls_file is just the filename, and local path needs construction
+            # Treat other GCS errors as fatal for loading by re-raising
+            raise e
+    # Local file handling
     elif storage_path: # Check if filename is provided
         # Construct local path (e.g., in a 'data' directory or similar)
         # For now, assume it's relative to the execution directory.
@@ -110,9 +113,9 @@ def load_known_urls(config: Config) -> Dict[str, List[str]]:
             logger.error(f"Failed to decode JSON from local file {local_file_path}: {e}")
         except Exception as e:
             logger.exception(f"Unexpected error loading known PDF URLs from local file: {e}")
-            # Log error but don't raise, treat as empty known URLs
+            # Treat local file errors as non-fatal for now, return empty dict
     else:
-        # Check if the old local file path exists for backward compatibility or specific local setup
+        # Check if the old local file path exists for backward compatibility
         old_local_path = getattr(config, 'known_urls_file_path', None)
         if old_local_path:
              logger.warning(f"Using deprecated 'known_urls_file_path': {old_local_path}. Consider migrating to 'known_urls_file'.")
@@ -145,12 +148,17 @@ def save_known_urls(known_urls_dict: Dict[str, List[str]], config: Config):
     # Sort lists within the dictionary for consistent output (optional but good practice)
     sorted_dict = {url: sorted(pdf_list) for url, pdf_list in known_urls_dict.items()}
 
-    if config.gcs_bucket_name and storage_path:
-        # Use GCS
+    # Determine storage method based on config
+    # Use GCS if bucket name AND storage path are provided
+    use_gcs = bool(config.gcs_bucket_name and storage_path)
+    # Use local only if storage path is provided AND GCS bucket name is NOT provided (or is empty)
+    use_local = bool(storage_path and not config.gcs_bucket_name)
+
+    if use_gcs:
+        # --- Use GCS ---
         client = _get_gcs_client()
         bucket = client.bucket(config.gcs_bucket_name)
-        blob = bucket.blob(storage_path) # Use storage_path as object name
-
+        blob = bucket.blob(storage_path)
         try:
             json_data = json.dumps(sorted_dict, ensure_ascii=False, indent=2)
             blob.upload_from_string(json_data, content_type='application/json')
@@ -158,8 +166,8 @@ def save_known_urls(known_urls_dict: Dict[str, List[str]], config: Config):
         except Exception as e:
             logger.exception(f"Failed to save known PDF URLs to GCS: {e}")
             # Consider admin notification
-    elif storage_path:
-        # Use local file (assuming relative path)
+    elif use_local:
+        # --- Use local file ---
         local_file_path = storage_path
         try:
             logger.info(f"Attempting to save known PDF URLs to local file: {local_file_path}")
@@ -173,23 +181,8 @@ def save_known_urls(known_urls_dict: Dict[str, List[str]], config: Config):
         except Exception as e:
             logger.exception(f"Failed to save known PDF URLs to local file {local_file_path}: {e}")
     else:
-         # Check if the old local file path exists for backward compatibility or specific local setup
-        old_local_path = getattr(config, 'known_urls_file_path', None)
-        if old_local_path:
-             logger.warning(f"Using deprecated 'known_urls_file_path' for saving: {old_local_path}. Consider migrating to 'known_urls_file'.")
-             # Attempt to save to old path (logic similar to above)
-             try:
-                 dir_name = os.path.dirname(old_local_path)
-                 if dir_name:
-                     os.makedirs(dir_name, exist_ok=True)
-                 json_data = json.dumps(sorted_dict, ensure_ascii=False, indent=2)
-                 with open(old_local_path, 'w', encoding='utf-8') as f:
-                     f.write(json_data)
-                 logger.info(f"Saved known PDF URLs for {len(sorted_dict)} target URLs to local file: {old_local_path}")
-             except Exception as e:
-                 logger.exception(f"Failed to save known PDF URLs to local file {old_local_path}: {e}")
-        else:
-            logger.error("Storage path (known_urls_file) is not configured. Cannot save known URLs.")
+        # Neither GCS nor local file configured correctly
+        logger.error("Storage configuration invalid. Cannot save known URLs. Provide GCS bucket name or ensure local path is set without GCS bucket.")
 
 
 def find_new_pdf_urls(target_url: str, current_pdf_urls: Set[str], config: Config) -> Set[str]:
@@ -210,11 +203,12 @@ def find_new_pdf_urls(target_url: str, current_pdf_urls: Set[str], config: Confi
 
     try:
         all_known_urls_dict = load_known_urls(config)
-    except Exception as e: # Catch fatal GCS load errors
+    except Exception as e: # Catch fatal load errors (like GCS connection issues)
         logger.error(f"find_new_pdf_urls: Fatal error loading known URLs, cannot proceed for {target_url}: {e}")
-        return set() # Cannot determine new URLs
+        # Re-raise the exception to signal failure to the caller (main.process_url)
+        raise e
 
-    known_urls_for_target: Set[str] = set(all_known_urls_dict.get(target_url, [])) # Get known URLs for this specific target
+    known_urls_for_target: Set[str] = set(all_known_urls_dict.get(target_url, []))
 
     new_urls_for_target = current_pdf_urls - known_urls_for_target
 
@@ -297,10 +291,10 @@ def load_latest_meeting_ids(config: Config) -> Dict[str, str]:
         except Exception as e:
             # Treat GCS errors other than NotFound as potentially critical for loading state
             logger.exception(f"Unexpected error loading latest meeting IDs from GCS: {e}")
-            # Depending on policy, could raise or return empty dict. Returning empty dict for now.
-            # raise # Or return {}
+            # Re-raise other GCS errors as fatal for loading state
+            raise e
     elif storage_path:
-        # Use local file (assuming relative path)
+        # Use local file
         local_file_path = storage_path
         try:
             logger.info(f"Attempting to load latest meeting IDs from local file: {local_file_path}")
@@ -330,6 +324,7 @@ def load_latest_meeting_ids(config: Config) -> Dict[str, str]:
             logger.error(f"Failed to decode JSON from local file {local_file_path}: {e}")
         except Exception as e:
             logger.exception(f"Unexpected error loading latest meeting IDs from local file: {e}")
+            # Treat local file errors as non-fatal for now, return empty dict
     else:
         logger.error("Storage path (latest_ids_file) is not configured.")
 
@@ -344,14 +339,17 @@ def save_latest_meeting_ids(latest_ids_dict: Dict[str, str], config: Config):
         latest_ids_dict (Dict[str, str]): The dictionary of meeting IDs to save.
         config (Config): Application configuration.
     """
-    storage_path = getattr(config, 'latest_ids_file', None) # Use the specific filename from config
+    storage_path = getattr(config, 'latest_ids_file', None)
 
-    if config.gcs_bucket_name and storage_path:
-        # Use GCS
+    # Determine storage method based on config
+    use_gcs = bool(config.gcs_bucket_name and storage_path)
+    use_local = bool(storage_path and not config.gcs_bucket_name)
+
+    if use_gcs:
+        # --- Use GCS ---
         client = _get_gcs_client()
         bucket = client.bucket(config.gcs_bucket_name)
         blob = bucket.blob(storage_path)
-
         try:
             # Sort dictionary by key for consistent output (optional)
             sorted_dict = dict(sorted(latest_ids_dict.items()))
@@ -361,8 +359,8 @@ def save_latest_meeting_ids(latest_ids_dict: Dict[str, str], config: Config):
         except Exception as e:
             logger.exception(f"Failed to save latest meeting IDs to GCS: {e}")
             # Consider admin notification
-    elif storage_path:
-        # Use local file (assuming relative path)
+    elif use_local:
+        # --- Use local file ---
         local_file_path = storage_path
         try:
             logger.info(f"Attempting to save latest meeting IDs to local file: {local_file_path}")
@@ -377,8 +375,9 @@ def save_latest_meeting_ids(latest_ids_dict: Dict[str, str], config: Config):
             logger.info(f"Saved latest meeting IDs for {len(sorted_dict)} target URLs to local file: {local_file_path}")
         except Exception as e:
             logger.exception(f"Failed to save latest meeting IDs to local file {local_file_path}: {e}")
-    else:
-        logger.error("Storage path (latest_ids_file) is not configured. Cannot save latest meeting IDs.")
+    # If neither GCS nor local is configured/applicable, log an error.
+    elif not use_gcs and not use_local:
+        logger.error("Storage configuration invalid or missing. Cannot save latest meeting IDs. Provide GCS bucket name or ensure local path is set without GCS bucket.")
 
 
 # --- Example Usage (Commented out as it needs significant updates) ---

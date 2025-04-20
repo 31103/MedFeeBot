@@ -2,8 +2,12 @@ import re
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup, SoupStrainer, Tag # Import Tag
 import re # 正規表現モジュールを追加
+import logging # Import logging
 from typing import List, Dict, Optional, Any # 型ヒント用 (Optional, Any を追加)
-from .logger import logger
+# from .logger import logger # REMOVE direct logger import
+
+# Get logger instance for this module
+logger = logging.getLogger(__name__)
 
 # PDFリンクを検出するための正規表現 (末尾のクエリパラメータも許容)
 PDF_LINK_PATTERN = re.compile(r"\.pdf(\?.*)?$", re.IGNORECASE)
@@ -263,23 +267,55 @@ def extract_latest_chuikyo_meeting(html_content: str, base_url: str) -> Optional
 
 # --- 例: 実行テスト ---
 if __name__ == "__main__":
-    from . import fetcher
-    from . import config
+    # Example usage requires setting up logger and getting URL differently now
+    from fetcher import fetch_html # Import locally for example
+    from logger import setup_logger # Import locally for example
+    setup_logger(level_str="INFO") # Setup with default level
 
-    test_url = config.TARGET_URL
-    if not test_url:
-        logger.error("テスト用のTARGET_URLが設定されていません。")
-    else:
-        logger.info(f"テスト実行: {test_url} からHTMLを取得してPDFリンクを抽出します。")
-        html = fetcher.fetch_html(test_url)
-        if html:
-            extracted_links = extract_pdf_links(html, test_url)
-            if extracted_links:
-                print("\n--- 抽出されたPDFリンク ---")
-                for link in sorted(list(extracted_links)):
-                    print(link)
-                print("--------------------------")
-            else:
-                logger.info("PDFリンクは見つかりませんでした。")
+    # Example URLs for testing different parsers
+    test_url_pdf = "https://www.hospital.or.jp/site/ministry/"
+    test_url_meeting = "https://www.mhlw.go.jp/stf/shingi/shingi-chuo_128154.html"
+
+    # --- Test PDF Parser ---
+    logger.info(f"テスト実行 (PDF): {test_url_pdf}")
+    html_pdf = fetch_html(test_url_pdf)
+    if html_pdf:
+        # Test extract_pdf_links (original function)
+        extracted_links = extract_pdf_links(html_pdf, test_url_pdf)
+        if extracted_links:
+            print(f"\n--- extract_pdf_links ({len(extracted_links)} links) ---")
+            # for link in sorted(list(extracted_links))[:5]: # Print first 5
+            #     print(link)
+            # print("...")
         else:
-            logger.error("HTMLの取得に失敗したため、解析テストを実行できませんでした。")
+            logger.info("extract_pdf_links: PDFリンクは見つかりませんでした。")
+
+        # Test extract_hospital_document_info
+        doc_infos = extract_hospital_document_info(html_pdf, test_url_pdf)
+        if doc_infos:
+             print(f"\n--- extract_hospital_document_info ({len(doc_infos)} docs) ---")
+             # for doc in doc_infos[:2]: # Print first 2
+             #     print(f"  Date: {doc.get('date')}, Title: {doc.get('title', '')[:20]}..., URL: {doc.get('url')}")
+             # print("...")
+        else:
+             logger.info("extract_hospital_document_info: 文書情報は見つかりませんでした。")
+    else:
+        logger.error(f"{test_url_pdf} からHTMLを取得できませんでした。")
+
+    # --- Test Meeting Parser ---
+    logger.info(f"\nテスト実行 (Meeting): {test_url_meeting}")
+    html_meeting = fetch_html(test_url_meeting)
+    if html_meeting:
+        meeting_info = extract_latest_chuikyo_meeting(html_meeting, test_url_meeting)
+        if meeting_info:
+            print("\n--- extract_latest_chuikyo_meeting ---")
+            print(f"  ID: {meeting_info.get('id')}")
+            print(f"  Date: {meeting_info.get('date')}")
+            print(f"  Topics: {len(meeting_info.get('topics', []))} items")
+            print(f"  Minutes URL: {meeting_info.get('minutes_url')}")
+            print(f"  Materials URL: {meeting_info.get('materials_url')}")
+            print("------------------------------------")
+        else:
+            logger.info("extract_latest_chuikyo_meeting: 会議情報は見つかりませんでした。")
+    else:
+        logger.error(f"{test_url_meeting} からHTMLを取得できませんでした。")
