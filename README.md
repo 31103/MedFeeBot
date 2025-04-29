@@ -190,6 +190,25 @@ Cloud Functions へのデプロイ前に、ローカル環境で関数の動作�
    ```
    これにより `main_gcf` 関数が実行され、コンソールにログが出力されます。
 
+## CI/CD (GitHub Actions)
+
+このリポジトリでは、GitHub Actions を使用して CI/CD
+パイプラインが構築されています (`.github/workflows/deploy.yml`)。
+
+- **テスト:** `main` ブランチへのプッシュ時に、自動的にテスト (`pytest`)
+  が実行されます。
+- **ステージング環境への自動デプロイ:**
+  テストが成功すると、自動的にステージング環境の Google Cloud Functions
+  へデプロイされます。
+  - デプロイには、リポジトリの Secrets にステージング環境用の GCP
+    認証情報や設定値 (`GCP_PROJECT_ID_STAGING`, `GCP_SA_KEY_STAGING` など)
+    が設定されている必要があります。詳細はワークフローファイル内のコメントを参照してください。
+- **手動実行:** `workflow_dispatch` トリガーにより、GitHub Actions
+  の画面から手動でワークフローを実行することも可能です。
+
+**(注意)**
+本番環境へのデプロイは、現時点ではこのワークフローには含まれていません。
+
 ## 開発者向け情報
 
 ### URLごとの設定 (`src/config.py`)

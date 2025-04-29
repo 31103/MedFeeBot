@@ -89,13 +89,38 @@
 - **Memory Bank 更新:** `activeContext.md`
   をクラウド実装フェーズ完了状態に更新。
 
+### **デプロイフェーズ (進行中)**
+
+- **CI/CD パイプライン構築 (初期):**
+  - GitHub Actions ワークフローファイル (`.github/workflows/deploy.yml`)
+    を作成。
+    - `main` ブランチへの push および手動実行 (`workflow_dispatch`)
+      をトリガーとする。
+    - Python 3.11 環境でのテスト (`pytest`) を実行する `test` ジョブを定義。
+    - テスト成功後にステージング環境へデプロイする `deploy-staging`
+      ジョブを定義。
+      - GCP 認証、Cloud SDK セットアップを行う。
+      - 必要な Secrets (GCP プロジェクトID、サービスアカウントキー等)
+        をコメントで明記。
+      - 必須およびオプションの環境変数を `env` コンテキストで定義。
+      - `gcloud functions deploy` コマンドで Cloud Functions (Gen2) へデプロイ。
+- **CI/CD パイプライン修正:**
+  - `deploy-staging` ジョブで、環境変数を `--set-env-vars` から
+    `--env-vars-file` を使用して YAML ファイル (`env-staging.yaml`)
+    から読み込む方式に変更。
+- **ドキュメント更新:**
+  - `README.md` に CI/CD (GitHub Actions) に関するセクションを追加。
+
 ## **3. 残っているタスク (デプロイフェーズ以降)**
 
 開発計画に基づき、以下のタスクを進めます。
 
-- **デプロイフェーズ:**
-  - ステージング/本番環境構築 (GCP プロジェクト、Functions、GCS、Slack)。
-  - CI/CD 構築 (GitHub Actions)。
+- **デプロイフェーズ (続き):**
+  - CI/CD パイプライン検証 (Secrets 設定、`main` ブランチへの push
+    による動作確認)。
+  - ステージング環境手動デプロイ (実施済み、デバッグ含む - activeContext参照)。
+  - 本番環境構築 (GCP プロジェクト、Functions、GCS、Secret Manager、Slack)。
+  - CI/CD 本番デプロイ有効化 (Secrets 設定、ワークフロー更新、テスト)。
 - **運用準備フェーズ:**
   - 監視・アラート設定 (Cloud Monitoring)。
   - 運用手順整備。

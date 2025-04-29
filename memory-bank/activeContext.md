@@ -1,4 +1,4 @@
-# **アクティブコンテキスト: MedFeeBot (ステージングデプロイ完了 & CI/CD構築中)**
+# **アクティブコンテキスト: MedFeeBot (CI/CD ワークフロー修正完了)**
 
 ## **1. 現在のフォーカス**
 
@@ -22,7 +22,7 @@
 - **テストコードの追加・更新:** (変更なし)
 - **テスト実行:** (変更なし)
 - **ドキュメント更新:**
-  - `README.md`: (変更なし)
+  - `README.md`: CI/CD (GitHub Actions) に関するセクションを追加。
   - `docs/deployment_plan_phase5.md`:
     手動デプロイ手順の修正（PowerShell対応、`--env-vars-file`
     推奨、`--source=./src` 指定、`requirements.txt`
@@ -32,6 +32,9 @@
 - **CI/CDパイプライン構築:**
   - GitHub Actions ワークフローファイル (`.github/workflows/deploy.yml`)
     を作成。テストジョブとステージング環境へのデプロイジョブを定義。
+  - GitHub Actions ワークフローファイル (`.github/workflows/deploy.yml`)
+    を修正。ステージングデプロイジョブで環境変数を `--env-vars-file` を使用して
+    YAML ファイルから読み込むように変更。
 - **ステージング環境手動デプロイ:**
   - `gcloud functions deploy` コマンドを使用してステージング環境
     (`medfeebot-staging`) への初回手動デプロイを実施。
@@ -96,7 +99,7 @@
   - 依存関係ファイル `requirements.txt` は `src`
     ディレクトリ内に配置する必要がある。
   - HTTPトリガーの場合、`functions-framework` が `requirements.txt` に必要。
-  - 環境変数は `--env-vars-file=env.yaml`
+  - 環境変数は `--env-vars-file=env-staging.yaml` (ステージングの場合)
     で設定することを推奨（特にPowerShell環境）。
 - **実行サービスアカウント権限:** Cloud
   Functions実行サービスアカウントには、GCSバケットへのアクセス権
@@ -152,6 +155,7 @@
   へのアクセス権限を実行サービスアカウントに適切に付与する必要がある。
 - **`gcloud` コマンドのシェル依存性:**
   コマンドの行継続文字や特殊文字の扱いはシェル (Bash, PowerShell等)
-  によって異なるため注意が必要。`--env-vars-file` はシェル依存を減らすのに有効。
+  によって異なるため注意が必要。`--env-vars-file`
+  はシェル依存を減らすのに有効であり、CI/CD ワークフローでも採用。
 - **コンテナヘルスチェック:** Cloud Functions (Gen2) / Cloud Run
   のコンテナ起動時にコードの初期化（インポート時など）でエラーが発生すると、ヘルスチェックが失敗しデプロイがロールバックされる。ログの詳細な確認が不可欠。
