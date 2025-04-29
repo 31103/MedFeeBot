@@ -13,7 +13,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11' # techContext.md に基づき 3.9 以降、最新安定版の一つである 3.11 を選択
+        python-version: '3.11'
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -69,6 +69,17 @@ jobs:
     - name: Set up Cloud SDK
       uses: 'google-github-actions/setup-gcloud@v2'
 
+    - name: Create staging environment variables file
+      run: |
+        echo "TARGET_URLS: ${{ env.TARGET_URLS }}" > env-staging.yaml
+        echo "GCS_BUCKET_NAME: ${{ env.GCS_BUCKET_NAME }}" >> env-staging.yaml
+        echo "SLACK_SECRET_ID: ${{ env.SLACK_SECRET_ID }}" >> env-staging.yaml
+        echo "KNOWN_URLS_FILE: ${{ env.KNOWN_URLS_FILE }}" >> env-staging.yaml
+        echo "LATEST_IDS_FILE: ${{ env.LATEST_IDS_FILE }}" >> env-staging.yaml
+        echo "SLACK_ADMIN_CHANNEL_ID: ${{ env.SLACK_ADMIN_CHANNEL_ID }}" >> env-staging.yaml
+        echo "LOG_LEVEL: ${{ env.LOG_LEVEL }}" >> env-staging.yaml
+      shell: bash # Windows runnerでもbashを使えるように明示
+
     - name: Deploy to Cloud Functions (Staging)
       run: |
         gcloud functions deploy ${{ env.CLOUD_FUNCTION_NAME }} \
@@ -80,6 +91,6 @@ jobs:
           --trigger-http \
           --allow-unauthenticated \
           --service-account=${{ env.CLOUD_FUNCTION_SA }} \
-          --set-env-vars="^---^TARGET_URLS=${{ env.TARGET_URLS }},GCS_BUCKET_NAME=${{ env.GCS_BUCKET_NAME }},SLACK_SECRET_ID=${{ env.SLACK_SECRET_ID }},KNOWN_URLS_FILE=${{ env.KNOWN_URLS_FILE }},LATEST_IDS_FILE=${{ env.LATEST_IDS_FILE }},SLACK_ADMIN_CHANNEL_ID=${{ env.SLACK_ADMIN_CHANNEL_ID }},LOG_LEVEL=${{ env.LOG_LEVEL }}" \
+          --env-vars-file=env-staging.yaml \
           --gen2 # 第2世代を指定
-      # 注意: 環境変数の区切り文字として '^---^' を使用しています。これは gcloud コマンドの仕様です。
+      # 注意: 環境変数は env-staging.yaml ファイルから読み込まれます。
