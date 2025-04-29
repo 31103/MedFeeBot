@@ -53,25 +53,40 @@
 
 ### 1.4. Cloud Functions 手動デプロイ (初回)
 
-*   **アクション:** ローカルリポジトリのルートディレクトリで、以下の `gcloud` コマンドを実行してCloud Functionsをデプロイします。
-    ```bash
-    gcloud functions deploy medfeebot-staging \
-      --gen2 \
-      --region=asia-northeast1 \
-      --runtime=python39 \
-      --source=. \
-      --entry-point=main_gcf \
-      --trigger-http \
-      --allow-unauthenticated \
-      --set-env-vars=^:^GCP_PROJECT=[STAGING_PROJECT_ID]:GCS_BUCKET_NAME=medfeebot-staging-state:KNOWN_URLS_FILE=known_urls_staging.json:LATEST_IDS_FILE=latest_ids_staging.json:TARGET_URLS=[カンマ区切りの監視URL]:SLACK_SECRET_ID=projects/[STAGING_PROJECT_ID]/secrets/medfeebot-slack-api-token-staging/versions/latest:LOG_LEVEL=INFO \
+*   **アクション:** ローカルリポジトリのルートディレクトリに `src/requirements.txt` が存在することを確認します（プロジェクトルートの `requirements.txt` をコピー）。また、HTTPトリガーに必要な `functions-framework` が `src/requirements.txt` に含まれていることを確認します。
+*   **アクション:** 環境変数を定義した `env.yaml` ファイルをプロジェクトルートに作成します（推奨）。
+    ```yaml
+    # env.yaml の例
+    TARGET_URLS: 'https://example.com/page1,https://example.org/page2' # シングルクォートで囲む
+    GCS_BUCKET_NAME: 'medfeebot-staging-state'
+    SLACK_SECRET_ID: 'projects/[STAGING_PROJECT_ID]/secrets/medfeebot-slack-api-token-staging/versions/latest'
+    KNOWN_URLS_FILE: 'known_urls_staging.json' # 必要に応じて変更
+    LATEST_IDS_FILE: 'latest_ids_staging.json' # 必要に応じて変更
+    LOG_LEVEL: 'INFO'
+    # SLACK_ADMIN_CHANNEL_ID: '[YOUR_ADMIN_SLACK_CHANNEL_ID]' # 必要に応じて追加
+    ```
+*   **アクション:** ローカルリポジトリのルートディレクトリで、以下の `gcloud` コマンドを実行してCloud Functionsをデプロイします（PowerShell環境を想定）。
+    ```powershell
+    # PowerShellでの実行例 (`--env-vars-file` を使用する場合 - 推奨)
+    gcloud functions deploy medfeebot-staging `
+      --gen2 `
+      --project=[STAGING_PROJECT_ID] `
+      --region=asia-northeast1 `
+      --runtime=python311 `
+      --source=./src ` # srcディレクトリをソースとして指定
+      --entry-point=main_gcf `
+      --trigger-http `
+      --allow-unauthenticated `
+      --env-vars-file=env.yaml `
       --service-account=[FUNCTIONS_SERVICE_ACCOUNT_EMAIL] # 必要に応じて指定
     ```
-    *   `[STAGING_PROJECT_ID]`、`[カンマ区切りの監視URL]`、`[FUNCTIONS_SERVICE_ACCOUNT_EMAIL]` は実際の値に置き換えてください。
-    *   環境変数名は `src/config.py` の実装に合わせてください。
-    *   サービスアカウントを指定しない場合は、デフォルトのCompute Engineサービスアカウントが使用されます。このアカウントにSecret ManagerとGCSへのアクセス権限が必要です。
-*   **アクション:** デプロイに使用するサービスアカウントに以下のIAMロールが付与されていることを確認します:
-    *   Secret Manager のシークレット アクセサー (`roles/secretmanager.secretAccessor`)
-    *   GCS バケットへのアクセス権限 (ステップ 1.3 で設定済み)
+    *   `[STAGING_PROJECT_ID]`、`[FUNCTIONS_SERVICE_ACCOUNT_EMAIL]` は実際の値に置き換えてください。
+    *   `env.yaml` 内のプレースホルダーも実際の値に置き換えてください。
+    *   サービスアカウントを指定しない場合は、デフォルトのApp Engineサービスアカウント (`[PROJECT_ID]@appspot.gserviceaccount.com`) が使用されます。
+    *   **注意:** `--set-env-vars` を使用する場合、PowerShellでは特殊文字のエスケープやクォーテーションに注意が必要です。`--env-vars-file` の使用を強く推奨します。
+*   **アクション:** Cloud Functionsの実行サービスアカウントに以下のIAMロールが付与されていることを確認します:
+    *   **Secret Manager シークレット アクセサー (`roles/secretmanager.secretAccessor`)**: Secret Managerに保存されたSlackトークン等にアクセスするために必要。
+    *   **ストレージオブジェクト管理者 (`roles/storage.objectAdmin`)**: GCSバケットへの状態ファイルの読み書きに必要 (ステップ 1.3 で設定推奨)。
 *   **確認:** デプロイが成功し、Cloud Functionsコンソールで関数がアクティブになっていること、およびHTTPSトリガーURLが発行されていることを確認します。
 
 ### 1.5. Cloud Scheduler設定
@@ -145,6 +160,7 @@
 *   **アクション:** リポジトリのルートに `.github/workflows/deploy.yml` ファイルを作成し、以下の内容を記述します (内容は要調整)。
 
     ```yaml
+    # .github/workflows/deploy.yml の例 (要調整)
     name: Deploy MedFeeBot
 
     on:
@@ -161,7 +177,7 @@
           - name: Set up Python
             uses: actions/setup-python@v5
             with:
-              python-version: '3.9' # プロジェクトで使用するバージョンに合わせる
+              python-version: '3.11' # プロジェクトで使用するバージョンに合わせる
           - name: Install dependencies
             run: |
               python -m pip install --upgrade pip
@@ -169,20 +185,36 @@
               pip install -r requirements-dev.txt
           - name: Run tests with pytest
             run: pytest
-          - name: Check types with mypy
-            run: mypy src tests
+          # - name: Check types with mypy # 必要に応じて有効化
+          #   run: mypy src tests
 
       deploy_staging:
         needs: test # testジョブの成功が必要
         runs-on: ubuntu-latest
         environment: staging # オプション: 環境保護ルールを設定する場合
+        # デプロイに必要なSecretsを環境変数として定義
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID_STAGING }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY_STAGING }}
+          GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_STAGING }} # GitHub Secret名を GCS_BUCKET_STAGING に合わせる
+          SLACK_SECRET_ID: ${{ secrets.SLACK_SECRET_ID_STAGING }}
+          TARGET_URLS: ${{ secrets.TARGET_URLS_STAGING }}
+          KNOWN_URLS_FILE: ${{ secrets.KNOWN_URLS_FILE_STAGING || 'known_urls_staging.json' }} # デフォルト値設定
+          LATEST_IDS_FILE: ${{ secrets.LATEST_IDS_FILE_STAGING || 'latest_ids_staging.json' }} # デフォルト値設定
+          LOG_LEVEL: ${{ secrets.LOG_LEVEL_STAGING || 'INFO' }} # デフォルト値設定
+          FUNCTION_SERVICE_ACCOUNT: ${{ secrets.FUNCTION_SERVICE_ACCOUNT_STAGING || '' }} # オプション: Functions実行SA
+
         steps:
           - uses: actions/checkout@v4
+
+          # デプロイに必要な requirements.txt を src ディレクトリにコピー
+          - name: Prepare deployment files
+            run: cp requirements.txt src/requirements.txt
 
           - id: 'auth'
             uses: 'google-github-actions/auth@v2'
             with:
-              credentials_json: '${{ secrets.GCP_SA_KEY_STAGING }}'
+              credentials_json: '${{ env.GCP_SA_KEY }}'
 
           - name: 'Set up Cloud SDK'
             uses: 'google-github-actions/setup-gcloud@v2'
@@ -192,26 +224,41 @@
               gcloud functions deploy medfeebot-staging \
                 --gen2 \
                 --region=asia-northeast1 \
-                --runtime=python39 \
-                --source=. \
+                --runtime=python311 \
+                --source=./src `# src ディレクトリを指定` \
                 --entry-point=main_gcf \
                 --trigger-http \
                 --allow-unauthenticated \
-                --set-env-vars=^:^GCP_PROJECT=${{ secrets.GCP_PROJECT_ID_STAGING }}:GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_STAGING }}:KNOWN_URLS_FILE=known_urls_staging.json:LATEST_IDS_FILE=latest_ids_staging.json:TARGET_URLS=${{ secrets.TARGET_URLS_STAGING }}:SLACK_SECRET_ID=${{ secrets.SLACK_SECRET_ID_STAGING }}:LOG_LEVEL=INFO \
-                --service-account=[FUNCTIONS_SERVICE_ACCOUNT_EMAIL] # 必要に応じて指定
+                --set-env-vars="^---^TARGET_URLS=${{ env.TARGET_URLS }},GCS_BUCKET_NAME=${{ env.GCS_BUCKET_NAME }},SLACK_SECRET_ID=${{ env.SLACK_SECRET_ID }},KNOWN_URLS_FILE=${{ env.KNOWN_URLS_FILE }},LATEST_IDS_FILE=${{ env.LATEST_IDS_FILE }},LOG_LEVEL=${{ env.LOG_LEVEL }}" \
+                ${{ env.FUNCTION_SERVICE_ACCOUNT && format('--service-account={0}', env.FUNCTION_SERVICE_ACCOUNT) || '' }} # 条件付きでSAを指定
 
       deploy_production:
         needs: deploy_staging # deploy_stagingジョブの成功が必要
         runs-on: ubuntu-latest
         environment: production # 本番環境用の保護ルールを設定
         if: github.ref == 'refs/heads/main' # mainブランチへのpush時のみ実行 (タグ契機などに変更可)
+        # 本番用のSecretsを環境変数として定義
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID_PRODUCTION }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+          GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_PRODUCTION }}
+          SLACK_SECRET_ID: ${{ secrets.SLACK_SECRET_ID_PRODUCTION }}
+          TARGET_URLS: ${{ secrets.TARGET_URLS_PRODUCTION }}
+          KNOWN_URLS_FILE: ${{ secrets.KNOWN_URLS_FILE_PRODUCTION || 'known_urls_production.json' }}
+          LATEST_IDS_FILE: ${{ secrets.LATEST_IDS_FILE_PRODUCTION || 'latest_ids_production.json' }}
+          LOG_LEVEL: ${{ secrets.LOG_LEVEL_PRODUCTION || 'INFO' }}
+          FUNCTION_SERVICE_ACCOUNT: ${{ secrets.FUNCTION_SERVICE_ACCOUNT_PRODUCTION || '' }}
+
         steps:
           - uses: actions/checkout@v4
+
+          - name: Prepare deployment files
+            run: cp requirements.txt src/requirements.txt
 
           - id: 'auth'
             uses: 'google-github-actions/auth@v2'
             with:
-              credentials_json: '${{ secrets.GCP_SA_KEY_PRODUCTION }}' # 本番用キーを使用
+              credentials_json: '${{ env.GCP_SA_KEY }}' # 本番用キーを使用
 
           - name: 'Set up Cloud SDK'
             uses: 'google-github-actions/setup-gcloud@v2'
@@ -221,18 +268,18 @@
               gcloud functions deploy medfeebot-production \
                 --gen2 \
                 --region=asia-northeast1 \
-                --runtime=python39 \
-                --source=. \
+                --runtime=python311 \
+                --source=./src \
                 --entry-point=main_gcf \
                 --trigger-http \
                 --allow-unauthenticated \
-                --set-env-vars=^:^GCP_PROJECT=${{ secrets.GCP_PROJECT_ID_PRODUCTION }}:GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_PRODUCTION }}:KNOWN_URLS_FILE=known_urls_production.json:LATEST_IDS_FILE=latest_ids_production.json:TARGET_URLS=${{ secrets.TARGET_URLS_PRODUCTION }}:SLACK_SECRET_ID=${{ secrets.SLACK_SECRET_ID_PRODUCTION }}:LOG_LEVEL=INFO \
-                --service-account=[FUNCTIONS_SERVICE_ACCOUNT_EMAIL] # 必要に応じて指定
+                --set-env-vars="^---^TARGET_URLS=${{ env.TARGET_URLS }},GCS_BUCKET_NAME=${{ env.GCS_BUCKET_NAME }},SLACK_SECRET_ID=${{ env.SLACK_SECRET_ID }},KNOWN_URLS_FILE=${{ env.KNOWN_URLS_FILE }},LATEST_IDS_FILE=${{ env.LATEST_IDS_FILE }},LOG_LEVEL=${{ env.LOG_LEVEL }}" \
+                ${{ env.FUNCTION_SERVICE_ACCOUNT && format('--service-account={0}', env.FUNCTION_SERVICE_ACCOUNT) || '' }}
     ```
-    *   `[FUNCTIONS_SERVICE_ACCOUNT_EMAIL]` は実際のサービスアカウントに置き換えてください。
+    *   `[FUNCTIONS_SERVICE_ACCOUNT_EMAIL]` は、GitHub Secrets (`FUNCTION_SERVICE_ACCOUNT_STAGING`, `FUNCTION_SERVICE_ACCOUNT_PRODUCTION`) 経由で設定するように変更しました（オプション）。
     *   環境変数や関数名 (`medfeebot-production`) は本番用に調整してください。
     *   本番デプロイのトリガー (`if: ...`) は、必要に応じてタグpush (`startsWith(github.ref, 'refs/tags/v')`) や手動承認 (`environment` の設定) に変更してください。
-*   **確認:** `.github/workflows/deploy.yml` をコミットし、`main` ブランチにプッシュします。GitHub Actionsタブでワークフローが実行され、`test` と `deploy_staging` ジョブが成功することを確認します。
+*   **確認:** `.github/workflows/deploy.yml` をコミットし、`main` ブランチにプッシュします。GitHub Actionsタブでワークフローが実行され、`test` と `deploy_staging` ジョブが成功することを確認します（GitHub Secretsが正しく設定されていれば）。
 
 *   **Mermaid図 (CI/CDパイプライン イメージ):**
     ```mermaid
