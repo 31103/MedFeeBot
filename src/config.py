@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Callable, Any # List, Dict, Callable, Any を追加
 from dotenv import load_dotenv
 from google.cloud import secretmanager as sm # Correct import
-import parser # parser モジュールをインポート (同じディレクトリ内なので直接インポート)
+from . import parser # parser モジュールを相対インポート
 
 # .env file loading is now done inside load_config()
 
@@ -69,11 +69,11 @@ def load_config() -> Config:
     url_configs_dict: Dict[str, Dict[str, Any]] = {
         "https://www.hospital.or.jp/site/ministry/": {
             "type": "pdf",
-            "parser": parser.extract_hospital_document_info # PDF情報リストを返す関数
+            "parser": parser.extract_hospital_document_info # Use the imported parser object
         },
         "https://www.mhlw.go.jp/stf/shingi/shingi-chuo_128154.html": {
             "type": "meeting",
-            "parser": parser.extract_latest_chuikyo_meeting # 会議情報辞書 or None を返す関数
+            "parser": parser.extract_latest_chuikyo_meeting # Use the imported parser object
         }
         # Add other URLs here if needed
     }
