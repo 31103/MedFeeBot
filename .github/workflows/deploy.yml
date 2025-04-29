@@ -71,13 +71,13 @@ jobs:
 
     - name: Create staging environment variables file
       run: |
-        echo "TARGET_URLS: ${{ env.TARGET_URLS }}" > env-staging.yaml
-        echo "GCS_BUCKET_NAME: ${{ env.GCS_BUCKET_NAME }}" >> env-staging.yaml
-        echo "SLACK_SECRET_ID: ${{ env.SLACK_SECRET_ID }}" >> env-staging.yaml
-        echo "KNOWN_URLS_FILE: ${{ env.KNOWN_URLS_FILE }}" >> env-staging.yaml
-        echo "LATEST_IDS_FILE: ${{ env.LATEST_IDS_FILE }}" >> env-staging.yaml
-        echo "SLACK_ADMIN_CHANNEL_ID: ${{ env.SLACK_ADMIN_CHANNEL_ID }}" >> env-staging.yaml
-        echo "LOG_LEVEL: ${{ env.LOG_LEVEL }}" >> env-staging.yaml
+        echo "TARGET_URLS: \"${{ env.TARGET_URLS }}\"" > env-staging.yaml
+        echo "GCS_BUCKET_NAME: \"${{ env.GCS_BUCKET_NAME }}\"" >> env-staging.yaml
+        echo "SLACK_SECRET_ID: \"${{ env.SLACK_SECRET_ID }}\"" >> env-staging.yaml
+        echo "KNOWN_URLS_FILE: \"${{ env.KNOWN_URLS_FILE }}\"" >> env-staging.yaml
+        echo "LATEST_IDS_FILE: \"${{ env.LATEST_IDS_FILE }}\"" >> env-staging.yaml
+        echo "SLACK_ADMIN_CHANNEL_ID: \"${{ env.SLACK_ADMIN_CHANNEL_ID }}\"" >> env-staging.yaml
+        echo "LOG_LEVEL: \"${{ env.LOG_LEVEL }}\"" >> env-staging.yaml
       shell: bash # Windows runnerでもbashを使えるように明示
 
     - name: Deploy to Cloud Functions (Staging)
