@@ -1,0 +1,96 @@
+name: Deploy MedFeeBot
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # 手動実行も可能にする
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+    - name: Run tests
+      run: pytest
+
+  deploy-staging:
+    needs: test
+    runs-on: ubuntu-latest
+    # このジョブを実行するには、以下のGitHub Secretsの設定が必要です:
+    # - GCP_PROJECT_ID_STAGING: ステージング環境のGCPプロジェクトID
+    # - GCP_SA_KEY_STAGING: ステージング環境へのデプロイ権限を持つサービスアカウントキー (Base64エンコード推奨)
+    # - CLOUD_FUNCTION_NAME_STAGING: ステージング環境のCloud Functions名
+    # - CLOUD_FUNCTION_REGION_STAGING: Cloud Functionsのリージョン (例: asia-northeast1)
+    # - CLOUD_FUNCTION_RUNTIME_STAGING: Cloud Functionsのランタイム (例: python311)
+    # - CLOUD_FUNCTION_SA_STAGING: Cloud Functionsの実行サービスアカウントのメールアドレス
+    # - GCS_BUCKET_NAME_STAGING: ステージング環境のGCSバケット名
+    # - SLACK_SECRET_ID_STAGING: ステージング環境のSlackトークン用Secret Manager ID
+    # - TARGET_URLS_STAGING: ステージング環境で監視するURL (カンマ区切り)
+    # オプションのSecret:
+    # - KNOWN_URLS_FILE_STAGING: (デフォルト: known_urls.json)
+    # - LATEST_IDS_FILE_STAGING: (デフォルト: latest_ids.json)
+    # - SLACK_ADMIN_CHANNEL_ID_STAGING: (エラー通知用)
+    # - LOG_LEVEL_STAGING: (デフォルト: INFO)
+
+    env:
+      # 必須の環境変数 (Secretsから取得)
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID_STAGING }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY_STAGING }}
+      CLOUD_FUNCTION_NAME: ${{ secrets.CLOUD_FUNCTION_NAME_STAGING }}
+      CLOUD_FUNCTION_REGION: ${{ secrets.CLOUD_FUNCTION_REGION_STAGING }}
+      CLOUD_FUNCTION_RUNTIME: ${{ secrets.CLOUD_FUNCTION_RUNTIME_STAGING }}
+      CLOUD_FUNCTION_SA: ${{ secrets.CLOUD_FUNCTION_SA_STAGING }}
+      GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME_STAGING }}
+      SLACK_SECRET_ID: ${{ secrets.SLACK_SECRET_ID_STAGING }}
+      TARGET_URLS: ${{ secrets.TARGET_URLS_STAGING }}
+      # オプションの環境変数 (Secretsから取得、なければデフォルト値)
+      KNOWN_URLS_FILE: ${{ secrets.KNOWN_URLS_FILE_STAGING || 'known_urls.json' }}
+      LATEST_IDS_FILE: ${{ secrets.LATEST_IDS_FILE_STAGING || 'latest_ids.json' }}
+      SLACK_ADMIN_CHANNEL_ID: ${{ secrets.SLACK_ADMIN_CHANNEL_ID_STAGING || '' }}
+      LOG_LEVEL: ${{ secrets.LOG_LEVEL_STAGING || 'INFO' }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ env.GCP_SA_KEY }}' # envから参照
+
+    - name: Set up Cloud SDK
+      uses: 'google-github-actions/setup-gcloud@v2'
+
+    - name: Create staging environment variables file
+      run: |
+        echo "TARGET_URLS: ${{ env.TARGET_URLS }}" > env-staging.yaml
+        echo "GCS_BUCKET_NAME: ${{ env.GCS_BUCKET_NAME }}" >> env-staging.yaml
+        echo "SLACK_SECRET_ID: ${{ env.SLACK_SECRET_ID }}" >> env-staging.yaml
+        echo "KNOWN_URLS_FILE: ${{ env.KNOWN_URLS_FILE }}" >> env-staging.yaml
+        echo "LATEST_IDS_FILE: ${{ env.LATEST_IDS_FILE }}" >> env-staging.yaml
+        echo "SLACK_ADMIN_CHANNEL_ID: ${{ env.SLACK_ADMIN_CHANNEL_ID }}" >> env-staging.yaml
+        echo "LOG_LEVEL: ${{ env.LOG_LEVEL }}" >> env-staging.yaml
+      shell: bash # Windows runnerでもbashを使えるように明示
+
+    - name: Deploy to Cloud Functions (Staging)
+      run: |
+        gcloud functions deploy ${{ env.CLOUD_FUNCTION_NAME }} \
+          --project=${{ env.GCP_PROJECT_ID }} \
+          --region=${{ env.CLOUD_FUNCTION_REGION }} \
+          --runtime=${{ env.CLOUD_FUNCTION_RUNTIME }} \
+          --source=./src \
+          --entry-point=main_gcf \
+          --trigger-http \
+          --allow-unauthenticated \
+          --service-account=${{ env.CLOUD_FUNCTION_SA }} \
+          --env-vars-file=env-staging.yaml \
+          --gen2 # 第2世代を指定
+      # 注意: 環境変数は env-staging.yaml ファイルから読み込まれます。

@@ -1,0 +1,7 @@
+requests
+beautifulsoup4
+slack_sdk
+google-cloud-storage
+google-cloud-secret-manager
+python-dotenv
+functions-framework

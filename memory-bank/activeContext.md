@@ -1,187 +1,161 @@
-# **アクティブコンテキスト: MedFeeBot (複数URL監視対応 & デプロイフェーズ)**
+# **アクティブコンテキスト: MedFeeBot (CI/CD ワークフロー修正完了)**
 
 ## **1. 現在のフォーカス**
 
-- **デプロイフェーズへの移行:** `docs/development_plan.md` に基づき、「5.
-  デプロイフェーズ」のタスクを継続する。
-- **ステージング環境構築:** GCP プロジェクト設定、Cloud Functions デプロイ、GCS
-  バケット作成、テスト用 Slack チャンネル設定。
-- **CI/CD構築:** GitHub Actions 設定 (テスト、デプロイ)。
-- **ローカルエミュレータでの最終確認:** Functions Framework を使用した動作確認。
-- **複数URL監視機能のデプロイ:**
-  - PDF検知と会議開催検知の両方に対応したコードをデプロイする。
+- **CI/CDパイプラインの検証:**
+  - GitHub Actions ワークフロー (`.github/workflows/deploy.yml`) が `main`
+    ブランチへのプッシュ時に正しく動作するか確認する。
+  - 必要な GitHub Secrets (GCPサービスアカウントキー、プロジェクトID等)
+    を設定する。
+- **本番環境構築:** `docs/deployment_plan_phase5.md`
+  に基づき、本番環境のセットアップを進める。
+- **パーサーバグ修正:** GitHub Issue #6
+  で追跡されている中医協パーサーのバグ修正に取り組む (別タスク)。
 
 ## **2. 最近の変更**
 
-- **設定管理の拡張 (`src/config.py`, `.env`):**
-  - 監視対象URLを単一から複数（カンマ区切り）に変更 (`TARGET_URLS` 環境変数）。
-  - URLごとの設定（監視タイプ `pdf`/`meeting`、パーサー関数）を管理する
-    `URL_CONFIGS` 辞書を導入。
-  - 状態管理ファイル名を環境変数で設定可能に (`KNOWN_URLS_FILE`,
-    `LATEST_IDS_FILE`)。
-- **パーサーの追加 (`src/parser.py`):**
-  - 中医協総会ページから最新会議情報を抽出する `extract_latest_chuikyo_meeting`
-    関数を追加（アドホック実装）。
-  - 既存の `extract_hospital_document_info` は維持。
-- **ストレージ機能の拡張 (`src/storage.py`):**
-  - PDF検知の状態管理をURLごとの辞書形式 (`{url: [pdf_url]}`) に変更
-    (`load_known_urls`, `save_known_urls`, `find_new_pdf_urls`)。
-  - 会議開催検知用の状態管理（最新会議ID）関数 (`load_latest_meeting_ids`,
-    `save_latest_meeting_ids`) を追加。
-- **メインロジックの修正 (`src/main.py`):**
-  - `config.target_urls` をループ処理するように変更。
-  - URLごとの処理を `process_url` ヘルパー関数に分割。
-  - `config.url_configs` から設定を取得し、タイプ (`pdf`/`meeting`)
-    に応じて処理を分岐。
-  - 各タイプに対応するパーサー関数とストレージ関数を呼び出すように修正。
-- **通知機能の調整 (`src/notifier.py`):**
-  - `send_slack_notification` 関数の引数を汎用的なペイロード形式
-    (`{'type': ..., 'data': ..., 'source_url': ...}`) に変更。
-  - ペイロードの `type` に応じて、PDF通知用または会議通知用のBlock
-    Kitメッセージを生成するように修正。
-- **テストコードの追加・更新:**
-  - `tests/test_parser.py`: `extract_latest_chuikyo_meeting` のテストを追加。
-  - `tests/test_storage.py`:
-    新しい状態管理形式と関数に対応するようにテストを更新・追加。
-  - `tests/test_config.py`: 新しい設定項目 (`TARGET_URLS`, `URL_CONFIGS` など)
-    の読み込みテストを更新・追加。
-  - `tests/test_notifier.py`:
-    新しいペイロード形式とタイプ別メッセージ生成に対応するようにテストを更新。
-  - `tests/test_integration.py`:
-    複数URL処理、タイプ別分岐、新しい差分検知ロジックを含む全体の流れを検証するようにテストを更新。
-- **テスト実行:** `pytest` を実行し、全てのテストがパスすることを確認。
+- **設定管理の拡張 (`src/config.py`, `.env`):** (変更なし)
+- **パーサーの追加 (`src/parser.py`):** (変更なし)
+- **ストレージ機能の拡張 (`src/storage.py`):** (変更なし)
+- **メインロジックの修正 (`src/main.py`):** (変更なし)
+- **通知機能の調整 (`src/notifier.py`):** (変更なし)
+- **テストコードの追加・更新:** (変更なし)
+- **テスト実行:** (変更なし)
 - **ドキュメント更新:**
-  - `README.md`: 複数URL対応、新しい設定方法、開発者向け情報 (`URL_CONFIGS`)
-    を追記・更新。
-- **中医協パーサーの修正 (`src/parser.py`):**
-  - `extract_latest_chuikyo_meeting`
-    関数が、会議情報テーブルのヘッダー行を誤ってデータ行として解析し、WARNING
-    が発生する問題を修正。
-  - CSSセレクタ `tbody > tr:nth-of-type(2)`
-    を使用して、正しいデータ行（2番目の行）を取得するように変更。
-  - これにより、`python -m src.main` 実行時の WARNING
-    が解消され、`latest_ids.json` に正しい会議IDが記録されることを確認。
+  - `README.md`: CI/CD (GitHub Actions) に関するセクションを追加。
+  - `docs/deployment_plan_phase5.md`:
+    手動デプロイ手順の修正（PowerShell対応、`--env-vars-file`
+    推奨、`--source=./src` 指定、`requirements.txt`
+    の配置、ランタイムバージョン更新、必要IAMロール追記）、GitHub
+    Actionsワークフロー例の更新。
+- **中医協パーサーの修正 (`src/parser.py`):** (変更なし - バグ再発 Issue #6)
+- **CI/CDパイプライン構築:**
+  - GitHub Actions ワークフローファイル (`.github/workflows/deploy.yml`)
+    を作成。テストジョブとステージング環境へのデプロイジョブを定義。
+  - GitHub Actions ワークフローファイル (`.github/workflows/deploy.yml`)
+    を修正。ステージングデプロイジョブで環境変数を `--env-vars-file` を使用して
+    YAML ファイルから読み込むように変更。
+- **ステージング環境手動デプロイ:**
+  - `gcloud functions deploy` コマンドを使用してステージング環境
+    (`medfeebot-staging`) への初回手動デプロイを実施。
+  - **デバッグと修正:**
+    - デプロイエラー (`requirements.txt` / `main.py` が見つからない)
+      に対処するため、`requirements.txt` を `src`
+      ディレクトリにコピーし、`--source=./src` を指定するように変更。
+    - コンテナ起動エラー (`Container Healthcheck failed`)
+      に対処するため、`src/requirements.txt` に `functions-framework` を追加。
+    - コンテナ起動時の `ModuleNotFoundError: No module named 'src'`
+      に対処するため、`src/config.py` の `from src import parser` を
+      `import parser` に修正。
+    - 実行時エラー (`PermissionDenied` for Secret Manager) に対処するため、Cloud
+      Functions実行サービスアカウントに `roles/secretmanager.secretAccessor`
+      ロールを付与。
+  - **デプロイ成功:**
+    上記修正により、ステージング環境への手動デプロイと基本的な動作（Secret
+    Managerからのトークン取得含む）を確認。
+- **パーサーバグの特定:**
+  ステージング環境での実行テスト中に、中医協パーサーがヘッダー行 ("回数")
+  を誤って解析するバグの再発を確認。GitHub Issue #6 を作成して追跡。
 
-## **3. 次のステップ (開発計画フェーズ5: デプロイ)**
+## **3. 次のステップ**
 
-1. **ステージング環境構築:**
-   - GCP プロジェクト設定 (ステージング用)。
-   - Cloud Functions デプロイ (ステージング)。
-   - GCS バケット作成・設定。
-   - テスト用 Slack チャンネル設定。
-   - **ステージング環境のCloud Functionsの環境変数 `TARGET_URLS` を設定。**
-     (他に必要な環境変数も設定)
+1. **CI/CDパイプライン検証:**
+   - GitHub リポジトリに必要な Secrets (`GCP_SA_KEY_STAGING`,
+     `GCP_PROJECT_ID_STAGING` など) を設定する。
+   - `main` ブランチにコードをプッシュし、GitHub Actions
+     ワークフローがトリガーされ、`test` ジョブと `deploy_staging`
+     ジョブが成功することを確認する。
 2. **本番環境構築:**
-   - GCP プロジェクト設定 (本番用)。
-   - Cloud Functions デプロイ (本番)。
-   - GCS バケット作成・設定。
-   - 本番 Slack チャンネル設定。
-   - **本番環境のCloud Functionsの環境変数 `TARGET_URLS` を設定。**
-     (他に必要な環境変数も設定)
-3. **CI/CD構築:**
-   - GitHub Actions 設定 (テスト、デプロイ)。
+   - `docs/deployment_plan_phase5.md` の「3.
+     本番環境構築」セクションに従い、GCPプロジェクト設定、Secret
+     Manager設定、GCSバケット作成、Cloud Functions手動デプロイ、Cloud
+     Scheduler設定、Slackチャンネル設定を行う。
+3. **CI/CD 本番デプロイ有効化:**
+   - 本番環境用の GitHub Secrets を設定する。
+   - `.github/workflows/deploy.yml` の `deploy_production`
+     ジョブのトリガー条件を確認・設定する。
+   - 必要に応じて GitHub Environments で保護ルールを設定する。
+   - CI/CD経由での本番デプロイをテストする。
+4. **パーサーバグ修正:** Issue #6 に基づき、`src/parser.py` の
+   `extract_latest_chuikyo_meeting` 関数を修正する (別タスク)。
 
 ## **4. アクティブな決定事項**
 
-- 準備フェーズのタスクはすべて完了した。
-- 技術検証により、主要技術 (HTML取得、PDFリンク抽出、Slack通知)
-  の実現可能性を確認した。
-- 基本実装フェーズのタスクはすべて完了。
-- ローカル環境での基本的な動作が可能 (`python -m src.main` で実行可能)。
-- テストフェーズのタスクはすべて完了。
-- テストカバレッジが向上し、コードの信頼性が高まった。
-- クラウド実装フェーズのタスクはすべて完了。
-- 次フェーズとしてデプロイフェーズに進む。
+- (変更なし)
+  準備フェーズ、基本実装フェーズ、テストフェーズ、クラウド実装フェーズのタスクは完了。
+- (変更なし) デプロイフェーズを進行中。
 - (変更なし) メモリバンクのコアファイル構造を採用。
 - (変更なし) `docs/development_plan.md`
   に記載されたフェーズに従って開発を進める。
 - (変更なし) `docs/specifications.md`
   に記載された技術スタック、アーキテクチャ、開発プラクティスを採用する。
-- 永続化方法として、現状の要件では GCS 上の JSON
-  ファイルがシンプルさとコスト面で最適と判断。
-- **複数URL監視への対応:**
-  PDF検知と会議開催検知という異なる目的を持つ複数のURLを並行して監視できるようにシステムを拡張することを決定。
-- **設定駆動型アーキテクチャの採用:** `src/config.py` の `URL_CONFIGS`
-  により、URLごとの監視タイプとパーサー関数を定義し、メインロジックでの処理分岐を制御することを決定。
-- **中医協パーサーのアドホック実装:** 中医協総会ページの会議開催検知用パーサー
-  (`extract_latest_chuikyo_meeting`)
-  は、当該ページのHTML構造に特化したアドホックな実装とすることを決定。
-- **状態管理の分離:** PDF検知用の状態 (`known_urls.json`) と会議開催検知用の状態
-  (`latest_ids.json`) を別々のファイルで管理することを決定。
-- (変更なし) `fetcher.fetch_html` の引数をConfigオブジェクトから個別の値に変更。
-- (変更なし)
-  Slack通知メッセージに文書の日付とタイトルを含める（PDF通知の場合）。会議通知用のメッセージ形式を別途定義。
+- (変更なし) 永続化方法として GCS 上の JSON ファイルが最適。
+- (変更なし) 複数URL監視、設定駆動型アーキテクチャ (`URL_CONFIGS`) を採用。
+- (変更なし) 中医協パーサーはアドホック実装。
+- (変更なし) 状態管理はファイル分離。
+- (変更なし) Slack通知メッセージ形式。
+- **Cloud Functions デプロイ構成:**
+  - ソースディレクトリは `./src` を指定。
+  - 依存関係ファイル `requirements.txt` は `src`
+    ディレクトリ内に配置する必要がある。
+  - HTTPトリガーの場合、`functions-framework` が `requirements.txt` に必要。
+  - 環境変数は `--env-vars-file=env-staging.yaml` (ステージングの場合)
+    で設定することを推奨（特にPowerShell環境）。
+- **実行サービスアカウント権限:** Cloud
+  Functions実行サービスアカウントには、GCSバケットへのアクセス権
+  (`roles/storage.objectAdmin` 等) と Secret Managerへのアクセス権
+  (`roles/secretmanager.secretAccessor`) が必要。
 
 ## **5. 重要なパターンと設定**
 
-- **開発プロセス:** GitHub Flow, Conventional Commits, SemVer を遵守する。
-- **コード品質:** 型アノテーション (`typing`, `mypy`) とテスト (`pytest`,
-  現在カバレッジ 71%) を重視。
-- **設定管理:**
-  - ローカル開発では `.env` ファイルと環境変数 (`TARGET_URLS`, `SLACK_API_TOKEN`
-    等) を使用。
-  - クラウド環境では Secret Manager (`SLACK_SECRET_ID`) と環境変数
-    (`TARGET_URLS`, `GCS_BUCKET_NAME` 等) を使用する。 (`src/config.py`
-    で実装済)
-  - URLごとの設定は `src/config.py` 内の `URL_CONFIGS` 辞書で管理。
-- **状態管理:**
-  - PDF検知: GCS (またはローカル) の `known_urls.json` (デフォルト名) に
-    `{url: [pdf_url]}` 形式で保存。
-  - 会議検知: GCS (またはローカル) の `latest_ids.json` (デフォルト名) に
-    `{url: meeting_id}` 形式で保存。
-- **エラーハンドリング:**
-  - 各モジュールで基本的な例外処理を実装。
-  - GCS アクセスエラーのハンドリングを実装済
-    (`storage.py`)。読み込みエラーは処理継続困難、書き込みエラーは警告として処理継続。
-  - URLごとの処理でエラーが発生しても、他のURLの処理は継続する (`main.py`)。
-- **モジュール構成:** `src` ディレクトリ以下に機能ごとにモジュールを分割
-  (変更なし)。
-- **テスト戦略:** `pytest`
-  を使用し、単体テストと結合テストを実装。モックを積極的に活用。
-- **Cloud Functions エントリーポイント:** `src/main.py` の `main_gcf` 関数
-  (HTTPトリガー)。
-- **パーサーロジック:**
-  - URLごとに適切なパーサー関数を `URL_CONFIGS` で指定。
-  - `hospital.or.jp` 向けPDF情報抽出 (`extract_hospital_document_info`)。
-  - `mhlw.go.jp` 中医協向け会議情報抽出 (`extract_latest_chuikyo_meeting`)。
-- **通知メッセージ形式:**
-  - Slack Block Kit を使用。
-  - `notifier.py` がペイロードの `type`
-    に応じてPDF用または会議用のメッセージを生成。
+- **開発プロセス:** (変更なし)
+- **コード品質:** (変更なし)
+- **設定管理:** (変更なし)
+- **状態管理:** (変更なし)
+- **エラーハンドリング:** (変更なし)
+- **モジュール構成:** (変更なし)
+- **テスト戦略:** (変更なし)
+- **Cloud Functions エントリーポイント:** (変更なし)
+- **パーサーロジック:** (変更なし - バグあり Issue #6)
+- **通知メッセージ形式:** (変更なし)
+- **デプロイコマンド (PowerShell):** 行継続文字は `` ` ``、`--set-env-vars` より
+  `--env-vars-file` を推奨。
+- **Pythonインポート:** Cloud Functions環境 (`--source=./src` の場合)
+  では、`src` ディレクトリ内のモジュールをインポートする際は相対インポート
+  (`from . import module`) または直接インポート (`import module`) を使用する
+  (`from src import module` は不可)。
 
 ## **6. 学びと洞察**
 
-- (変更なし) Slack API トークンには種類があり、用途に応じた適切なトークン
-  (`xoxb-...` for `chat.postMessage`) とスコープ (`chat:write`) が必要。
-- (変更なし) Slack
-  ボットは、メッセージを送信する前にターゲットチャンネルに招待されている必要がある。
-- (変更なし) PoC
-  により、基本的な技術要素の組み合わせは可能であることが確認できた。
-- 基本実装を通じて、各コンポーネント (fetcher, parser, storage, notifier)
-  が連携して動作する基本的な形ができた。
-- ローカルでのURL永続化には `known_urls.json`
-  を使用。初回実行時の挙動も実装済み。
-- テスト実装とリファクタリングを通じて、設定管理 (`config.py`, `logger.py`,
-  `notifier.py`) の方法を改善し、モックを使用したテストが容易になった。
-- テスト駆動開発 (TDD) 的なアプローチ（テスト作成 -> 失敗確認 -> 実装/修正 ->
-  テスト成功）が、特にリファクタリング時に有効だった。
-- Cloud Functions 化にあたり、コアロジック (`run_check`) とエントリーポイント
-  (`main_gcf`, `if __name__ == "__main__"`)
-  を分離することで、テスト容易性と再利用性が向上した。
-- GCS の `NotFound`
-  例外を捕捉することで、初回実行（ファイルが存在しない状態）を明確に判定できる。
-- Secret Manager
-  を利用することで、機密情報（Slackトークン）をコードや環境変数から分離し、セキュリティを向上させることができる。
-- (変更なし)
-  プロジェクトは詳細な仕様書と開発計画に基づいており、明確なロードマップが存在する。
-- メモリバンクは、プロジェクトの進行に合わせて継続的に更新する必要がある。
-- **特定のサイト構造に対応するためのパーサーロジックは、サイト構造の変更に脆弱であるため、アドホックな対応として明確に区別し、依存性を局所化することが重要。**
-- **関数の引数として設定値を明示的に渡すことで、単体テストにおけるモック設定が容易になり、テスト容易性が向上する。**
-- **設定駆動型アーキテクチャ (`URL_CONFIGS`)
-  は、新しい監視対象や監視タイプを追加する際の拡張性を高めるが、設定自体の管理が必要になる。**
-- **異なる目的（PDFリスト vs
-  最新ID）の状態管理は、それぞれに適したデータ構造とファイル分離が必要。**
-- **HTML構造の複雑さへの対応:**
-  ウェブサイトのHTML構造は想定と異なる場合があり（例: `tbody`
-  の最初の行が実質ヘッダー）、複数回の試行錯誤と詳細な調査（`read_file` や CSS
-  セレクタの活用）が必要になることがある。パーサーの実装は、このような構造変化に対してある程度の堅牢性を持たせるか、あるいは特定の構造に依存することを明確にしておく必要がある。
+- (変更なし) Slack API トークンとスコープ。
+- (変更なし) Slack ボットのチャンネル招待。
+- (変更なし) PoCによる技術検証。
+- (変更なし) 基本実装によるコンポーネント連携。
+- (変更なし) ローカル状態管理。
+- (変更なし) テストとリファクタリングの効果。
+- (変更なし) TDD的アプローチの有効性。
+- (変更なし) Cloud Functionsのロジック分離。
+- (変更なし) GCS `NotFound` 例外。
+- (変更なし) Secret Managerの利点。
+- (変更なし) 仕様書と計画の重要性。
+- (変更なし) メモリバンクの継続更新。
+- (変更なし) 特定サイト向けパーサーの脆弱性。
+- (変更なし) 引数渡しによるテスト容易性。
+- (変更なし) 設定駆動型アーキテクチャの利点と管理コスト。
+- (変更なし) 状態管理の分離。
+- (変更なし) HTML構造の複雑さへの対応。
+- **Cloud Functions デプロイの依存関係:** `--source`
+  で指定したディレクトリ直下に `requirements.txt` が必要。HTTPトリガーには
+  `functions-framework` が必須。
+- **Cloud Functions Python インポートパス:** `--source=./src` の場合、`src`
+  がルートとして扱われるため、`src` 内の他モジュールは `from src import ...`
+  ではなく `import ...` や `from . import ...` でインポートする必要がある。
+- **Cloud Functions 実行権限:** 関数が使用するGCPサービス (GCS, Secret
+  Manager等)
+  へのアクセス権限を実行サービスアカウントに適切に付与する必要がある。
+- **`gcloud` コマンドのシェル依存性:**
+  コマンドの行継続文字や特殊文字の扱いはシェル (Bash, PowerShell等)
+  によって異なるため注意が必要。`--env-vars-file`
+  はシェル依存を減らすのに有効であり、CI/CD ワークフローでも採用。
+- **コンテナヘルスチェック:** Cloud Functions (Gen2) / Cloud Run
+  のコンテナ起動時にコードの初期化（インポート時など）でエラーが発生すると、ヘルスチェックが失敗しデプロイがロールバックされる。ログの詳細な確認が不可欠。

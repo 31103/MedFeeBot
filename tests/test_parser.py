@@ -282,7 +282,14 @@ HTML_CHUIKYO_FULL = """
 <html><body>
 <table class="m-tableFlex">
   <tbody>
-    <tr> <!-- First row is the target -->
+    <tr class="m-table__center m-table__nowrap"> <!-- Header Row Added -->
+      <th class="m-table__center" scope="col">回数</th>
+      <th class="m-table__center" scope="col">開催日</th>
+      <th class="m-table__center" scope="col">議題等</th>
+      <th class="m-table__center" scope="col">議事録／議事要旨</th>
+      <th class="m-table__center" scope="col">資料等</th>
+    </tr>
+    <tr> <!-- Data Row (Now 2nd row) -->
       <td class="m-table__highlight"> 第606回 </td>
       <td class="m-table__highlight m-table__nowrap"> 2025年4月9日<br>（令和7年4月9日） </td>
       <td>
@@ -322,7 +329,14 @@ HTML_CHUIKYO_NO_OPTIONAL_LINKS = """
 <html><body>
 <table class="m-tableFlex">
   <tbody>
-    <tr>
+    <tr class="m-table__center m-table__nowrap"> <!-- Header Row Added -->
+      <th class="m-table__center" scope="col">回数</th>
+      <th class="m-table__center" scope="col">開催日</th>
+      <th class="m-table__center" scope="col">議題等</th>
+      <th class="m-table__center" scope="col">議事録／議事要旨</th>
+      <th class="m-table__center" scope="col">資料等</th>
+    </tr>
+    <tr> <!-- Data Row (Now 2nd row) -->
       <td class="m-table__highlight"> 第605回 </td>
       <td class="m-table__highlight m-table__nowrap"> 2025年3月26日 </td>
       <td>
@@ -351,7 +365,14 @@ HTML_CHUIKYO_TOPICS_AS_TEXT = """
 <html><body>
 <table class="m-tableFlex">
   <tbody>
-    <tr>
+    <tr class="m-table__center m-table__nowrap"> <!-- Header Row Added -->
+      <th class="m-table__center" scope="col">回数</th>
+      <th class="m-table__center" scope="col">開催日</th>
+      <th class="m-table__center" scope="col">議題等</th>
+      <th class="m-table__center" scope="col">議事録／議事要旨</th>
+      <th class="m-table__center" scope="col">資料等</th>
+    </tr>
+    <tr> <!-- Data Row (Now 2nd row) -->
       <td> 第604回 </td>
       <td> 2025年3月12日 </td>
       <td> 単一の議題テキスト </td> <!-- No <ol> -->
@@ -465,9 +486,16 @@ HTML_CHUIKYO_HEADER_IN_TBODY = """
 </table>
 </body></html>
 """
-# Current parser (tbody > tr:first-of-type) will grab the header row,
-# fail to find mandatory fields in the expected format, and should return None.
-EXPECTED_CHUIKYO_HEADER_IN_TBODY: Optional[Dict[str, Any]] = None
+# Current parser (tbody > tr:nth-of-type(2)) will grab the data row correctly.
+EXPECTED_CHUIKYO_HEADER_IN_TBODY: Optional[Dict[str, Any]] = {
+    'id': '第607回',
+    'date': '2025年4月16日',
+    'topics': ['Real Topic'],
+    'minutes_url': 'https://www.mhlw.go.jp/stf/shingi/minutes.html',
+    'minutes_text': '議事録',
+    'materials_url': 'https://www.mhlw.go.jp/stf/shingi/materials.html',
+    'materials_text': '資料'
+}
 
 
 # --- Test Cases for extract_latest_chuikyo_meeting ---
@@ -484,7 +512,7 @@ EXPECTED_CHUIKYO_HEADER_IN_TBODY: Optional[Dict[str, Any]] = None
         (HTML_CHUIKYO_MISSING_DATE_TD, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_DATE_TD),
         (HTML_CHUIKYO_MISSING_TOPICS_TD, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_MISSING_TOPICS_TD),
         (HTML_CHUIKYO_EMPTY_TOPICS_LI, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_EMPTY_TOPICS_LI),
-        pytest.param(HTML_CHUIKYO_HEADER_IN_TBODY, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_HEADER_IN_TBODY, marks=pytest.mark.xfail(reason="Parser currently assumes first tbody row is data, not header")), # Test header row in tbody
+        (HTML_CHUIKYO_HEADER_IN_TBODY, CHUIKYO_BASE_URL, EXPECTED_CHUIKYO_HEADER_IN_TBODY), # Test header row in tbody (should now pass)
         (HTML_EMPTY, CHUIKYO_BASE_URL, None), # Empty HTML should return None
     ],
 )

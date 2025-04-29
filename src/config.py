@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Callable, Any # List, Dict, Callable, Any を追加
 from dotenv import load_dotenv
 from google.cloud import secretmanager as sm # Correct import
-from src import parser # parser モジュールをインポート
+from . import parser # parser モジュールを相対インポート
 
 # .env file loading is now done inside load_config()
 
@@ -69,11 +69,11 @@ def load_config() -> Config:
     url_configs_dict: Dict[str, Dict[str, Any]] = {
         "https://www.hospital.or.jp/site/ministry/": {
             "type": "pdf",
-            "parser": parser.extract_hospital_document_info # PDF情報リストを返す関数
+            "parser": parser.extract_hospital_document_info # Use the imported parser object
         },
         "https://www.mhlw.go.jp/stf/shingi/shingi-chuo_128154.html": {
             "type": "meeting",
-            "parser": parser.extract_latest_chuikyo_meeting # 会議情報辞書 or None を返す関数
+            "parser": parser.extract_latest_chuikyo_meeting # Use the imported parser object
         }
         # Add other URLs here if needed
     }
@@ -94,8 +94,29 @@ def load_config() -> Config:
     # --- Slack API Token Handling ---
     slack_secret_id = os.getenv("SLACK_SECRET_ID")
     if slack_secret_id:
-        logging.info(f"Attempting to load Slack token from Secret Manager: {slack_secret_id}")
-        slack_api_token = access_secret_version(slack_secret_id)
+        logging.info(f"Attempting to load Slack token from Secret Manager using full path: {slack_secret_id}")
+        # Extract project_id, secret_name, and version_id from the full secret path
+        try:
+            # Expected format: projects/PROJECT_ID/secrets/SECRET_ID/versions/VERSION_ID
+            parts = slack_secret_id.strip().split('/')
+            if len(parts) == 6 and parts[0] == 'projects' and parts[2] == 'secrets' and parts[4] == 'versions':
+                project_id = parts[1]
+                secret_name = parts[3]
+                version_id = parts[5]
+                logging.debug(f"Extracted Project ID: {project_id}, Secret Name: {secret_name}, Version ID: {version_id}")
+                slack_api_token = access_secret_version(project_id, secret_name, version_id)
+            elif len(parts) == 4 and parts[0] == 'projects' and parts[2] == 'secrets':
+                 # Handle case where version is omitted (defaults to latest)
+                 project_id = parts[1]
+                 secret_name = parts[3]
+                 logging.debug(f"Extracted Project ID: {project_id}, Secret Name: {secret_name}, Version ID: latest (default)")
+                 slack_api_token = access_secret_version(project_id, secret_name) # Use default version "latest"
+            else:
+                 raise ValueError(f"Invalid SLACK_SECRET_ID format: {slack_secret_id}. Expected format: projects/PROJECT_ID/secrets/SECRET_ID[/versions/VERSION_ID]")
+        except Exception as e:
+            logging.error(f"Failed to parse SLACK_SECRET_ID or access Secret Manager: {e}", exc_info=True)
+            # Raise a more specific error to aid debugging
+            raise ValueError(f"Failed to load Slack token from Secret Manager using ID '{slack_secret_id}'. Check format, permissions, and ensure the Secret Manager API is enabled.") from e
     else:
         logging.info("SLACK_SECRET_ID not set, attempting to load SLACK_API_TOKEN from environment.")
         slack_api_token = os.getenv("SLACK_API_TOKEN", "")
