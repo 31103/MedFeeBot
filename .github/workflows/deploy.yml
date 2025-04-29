@@ -80,6 +80,14 @@ jobs:
         echo "LOG_LEVEL: \"${{ env.LOG_LEVEL }}\"" >> env-staging.yaml
       shell: bash # Windows runnerでもbashを使えるように明示
 
+    - name: Check gcloud auth and config
+      run: |
+        echo "--- gcloud auth list ---"
+        gcloud auth list
+        echo "--- gcloud config list ---"
+        gcloud config list
+      shell: bash
+
     - name: Deploy to Cloud Functions (Staging)
       run: |
         gcloud functions deploy ${{ env.CLOUD_FUNCTION_NAME }} \
