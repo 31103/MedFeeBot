@@ -176,7 +176,7 @@ def extract_latest_chuikyo_meeting(html_content: str, base_url: str) -> Optional
             return None
 
         # *最初* の <tr> (最新会議のデータ行) を探す (CSSセレクタを使用)
-        target_row = table.select_one('tbody > tr:first-of-type') # tbody 直下の *最初* の tr を取得
+        target_row = table.select_one('tbody > tr:nth-of-type(2)') # tbody 直下の *2番目* の tr (データ行) を取得
         if not target_row or not isinstance(target_row, Tag):
             logger.warning("会議情報テーブルの tbody 内に最初の行 (データ行 <tr>) が見つかりません (CSS Selector failed)。")
             return None
@@ -268,45 +268,55 @@ def extract_latest_chuikyo_meeting(html_content: str, base_url: str) -> Optional
 # --- 例: 実行テスト ---
 if __name__ == "__main__":
     # Example usage requires setting up logger and getting URL differently now
-    from fetcher import fetch_html # Import locally for example
+    # from fetcher import fetch_html # Import locally for example (Use local file instead)
     from logger import setup_logger # Import locally for example
     setup_logger(level_str="INFO") # Setup with default level
 
     # Example URLs for testing different parsers
     test_url_pdf = "https://www.hospital.or.jp/site/ministry/"
-    test_url_meeting = "https://www.mhlw.go.jp/stf/shingi/shingi-chuo_128154.html"
+    # test_url_meeting = "https://www.mhlw.go.jp/stf/shingi/shingi-chuo_128154.html" # Original URL
+    test_html_file_meeting = "shingi-chuo_128154.html" # Local HTML file for testing
+    base_url_meeting = "https://www.mhlw.go.jp/stf/shingi/" # Base URL for resolving relative links if any
 
-    # --- Test PDF Parser ---
-    logger.info(f"テスト実行 (PDF): {test_url_pdf}")
-    html_pdf = fetch_html(test_url_pdf)
-    if html_pdf:
-        # Test extract_pdf_links (original function)
-        extracted_links = extract_pdf_links(html_pdf, test_url_pdf)
-        if extracted_links:
-            print(f"\n--- extract_pdf_links ({len(extracted_links)} links) ---")
-            # for link in sorted(list(extracted_links))[:5]: # Print first 5
-            #     print(link)
-            # print("...")
-        else:
-            logger.info("extract_pdf_links: PDFリンクは見つかりませんでした。")
-
-        # Test extract_hospital_document_info
-        doc_infos = extract_hospital_document_info(html_pdf, test_url_pdf)
-        if doc_infos:
-             print(f"\n--- extract_hospital_document_info ({len(doc_infos)} docs) ---")
-             # for doc in doc_infos[:2]: # Print first 2
-             #     print(f"  Date: {doc.get('date')}, Title: {doc.get('title', '')[:20]}..., URL: {doc.get('url')}")
-             # print("...")
-        else:
-             logger.info("extract_hospital_document_info: 文書情報は見つかりませんでした。")
-    else:
-        logger.error(f"{test_url_pdf} からHTMLを取得できませんでした。")
+    # --- Test PDF Parser (Commented out for this test) ---
+    # logger.info(f"テスト実行 (PDF): {test_url_pdf}")
+    # html_pdf = fetch_html(test_url_pdf) # This would cause NameError as fetch_html is commented out
+    # if html_pdf:
+    #     # Test extract_pdf_links (original function)
+    #     extracted_links = extract_pdf_links(html_pdf, test_url_pdf)
+    #     if extracted_links:
+    #         print(f"\n--- extract_pdf_links ({len(extracted_links)} links) ---")
+    #         # for link in sorted(list(extracted_links))[:5]: # Print first 5
+    #         #     print(link)
+    #         # print("...")
+    #     else:
+    #         logger.info("extract_pdf_links: PDFリンクは見つかりませんでした。")
+    #
+    #     # Test extract_hospital_document_info
+    #     doc_infos = extract_hospital_document_info(html_pdf, test_url_pdf)
+    #     if doc_infos:
+    #          print(f"\n--- extract_hospital_document_info ({len(doc_infos)} docs) ---")
+    #          # for doc in doc_infos[:2]: # Print first 2
+    #          #     print(f"  Date: {doc.get('date')}, Title: {doc.get('title', '')[:20]}..., URL: {doc.get('url')}")
+    #          # print("...")
+    #     else:
+    #          logger.info("extract_hospital_document_info: 文書情報は見つかりませんでした。")
+    # else:
+    #     logger.error(f"{test_url_pdf} からHTMLを取得できませんでした。")
 
     # --- Test Meeting Parser ---
-    logger.info(f"\nテスト実行 (Meeting): {test_url_meeting}")
-    html_meeting = fetch_html(test_url_meeting)
+    logger.info(f"\nテスト実行 (Meeting): ローカルファイル {test_html_file_meeting} を使用")
+    html_meeting = None
+    try:
+        with open(test_html_file_meeting, 'r', encoding='utf-8') as f:
+            html_meeting = f.read()
+    except FileNotFoundError:
+        logger.error(f"テスト用HTMLファイルが見つかりません: {test_html_file_meeting}")
+    except Exception as e:
+        logger.error(f"テスト用HTMLファイルの読み込み中にエラーが発生しました: {e}")
+
     if html_meeting:
-        meeting_info = extract_latest_chuikyo_meeting(html_meeting, test_url_meeting)
+        meeting_info = extract_latest_chuikyo_meeting(html_meeting, base_url_meeting) # Use base_url_meeting
         if meeting_info:
             print("\n--- extract_latest_chuikyo_meeting ---")
             print(f"  ID: {meeting_info.get('id')}")
@@ -318,4 +328,4 @@ if __name__ == "__main__":
         else:
             logger.info("extract_latest_chuikyo_meeting: 会議情報は見つかりませんでした。")
     else:
-        logger.error(f"{test_url_meeting} からHTMLを取得できませんでした。")
+        logger.error(f"{test_html_file_meeting} からHTMLを取得できませんでした。")
